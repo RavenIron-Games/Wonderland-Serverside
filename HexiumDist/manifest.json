@@ -1,0 +1,9 @@
+{
+    "name": "Wonderland",
+    "version_number": "2.0.0",
+    "website_url": "https://discord.gg/GTTCnGS6Ym",
+    "description": "Strictly server-side Valheim mod - no client install ever needed. Smart item automation, capacity growth, world governance, starter grants, and anti-cheat - full PlayFab/Xbox/crossplay support.",
+    "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2333"
+    ]
+}
