@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0
+## 0.1.0
 
 Complete rebuild as a strictly server-side-only mod — no client install ever required, so PlayFab,
 Xbox, and crossplay players get full functionality. This is a clean-slate repurpose of the mod name;
@@ -22,7 +22,7 @@ work on a real headless server at all.
 - One-time starter kit + labeled boat on first character creation
 - Max-HP ceiling/floor enforcement, an item-fabrication integrity sweep, and detect-only checks for implausible speed, flight/noclip, and outsized damage
 - Auto-detection between Valheim 0.221.12 and 0.221.13+ builds, bridging the one API shape that differs between them (ZDO sector coordinates)
-- Config migration from the pre-2.0.0 key names, where the underlying setting still exists
+- Config migration from the pre-0.1.0 key names, where the underlying setting still exists
 
 ### Removed
 - Everything client-simulated and therefore unenforceable server-side: combat/movement/stamina tuning, the HUD overlay, portal PIN-locking/single-portal dialing, craft-from-containers (the live crafting check only ever reads the player's own inventory, with no server-side path around it)
