@@ -46,6 +46,15 @@
       <HintPath>..\libs-Tools\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <!-- ServerSync.cs's client-side config-mismatch popup touches TMP_Text/MaskableGraphic directly. -->
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>..\libs-Tools\Unity.TextMeshPro.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>..\libs-Tools\UnityEngine.UI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>

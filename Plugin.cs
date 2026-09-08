@@ -1,16 +1,12 @@
-using System;
 using BepInEx;
 using HarmonyLib;
 using ServerSync;
-using UnityEngine;
 using Wonderland.Core;
-using Wonderland.Subsystems.BuildingControl;
-using Wonderland.Subsystems.CraftingControl;
-using Wonderland.Subsystems.HUDControl;
-using Wonderland.Subsystems.InventoryControl;
-using Wonderland.Subsystems.PlayerControl;
-using Wonderland.Subsystems.ProductionControl;
-using Wonderland.Subsystems.WorldControl;
+using Wonderland.Subsystems.ItemFlow;
+using Wonderland.Subsystems.Security;
+using Wonderland.Subsystems.Storage;
+using Wonderland.Subsystems.Vitality;
+using Wonderland.Subsystems.WorldGovernor;
 
 namespace Wonderland
 {
@@ -19,20 +15,20 @@ namespace Wonderland
     {
         public const string ModGUID = "wubarrk.wonderland";
         public const string ModName = "Wonderland";
-        public const string ModVersion = "1.0.0";
+        public const string ModVersion = "2.0.0";
 
         public static WonderlandPlugin Instance { get; private set; } = null!;
         public static ConfigSync ConfigSync { get; private set; } = null!;
 
         private readonly Harmony _harmony = new Harmony(ModGUID);
-        private readonly SubsystemRegistry _subsystems = new SubsystemRegistry();
+        public SubsystemRegistry Subsystems { get; } = new SubsystemRegistry();
 
         private void Awake()
         {
             Instance = this;
             WonderlandDebug.Init(Logger);
 
-            WonderlandDebug.LogAlways($"Starting Wonderland v{ModVersion} core loader...");
+            WonderlandDebug.LogAlways($"Starting Wonderland v{ModVersion} (server-only rebuild)...");
 
             ConfigSync = new ConfigSync(ModGUID)
             {
@@ -44,47 +40,45 @@ namespace Wonderland
             WonderlandConfig.Bind(Config, ConfigSync);
 
             RegisterSubsystems();
-            _subsystems.InitializeAll(Config, ConfigSync, _harmony);
+            Subsystems.InitializeAll(Config, ConfigSync, _harmony);
+            SubsystemRegistry.SafePatch(_harmony, typeof(WorldReadyHook));
 
             WonderlandDebug.LogAlways("Wonderland initialized successfully.");
         }
 
         private void RegisterSubsystems()
         {
-            _subsystems.Register(new BuildingSubsystem());
-            _subsystems.Register(new InventorySubsystem());
-            _subsystems.Register(new CraftingSubsystem());
-            _subsystems.Register(new ProductionSubsystem());
-            _subsystems.Register(new PlayerSubsystem());
-            _subsystems.Register(new HUDSubsystem());
-            _subsystems.Register(new WorldSubsystem());
+            Subsystems.Register(new ItemFlowSubsystem());
+            Subsystems.Register(new StorageSubsystem());
+            Subsystems.Register(new WorldGovernorSubsystem());
+            Subsystems.Register(new VitalitySubsystem());
+            Subsystems.Register(new SecuritySubsystem());
         }
 
         private void Update()
         {
-            _subsystems.OnUpdate();
-        }
-
-        private void OnGUI()
-        {
-            _subsystems.OnGUI();
+            Subsystems.OnUpdate();
         }
 
         private void OnDestroy()
         {
-            _subsystems.ShutdownAll();
+            Subsystems.ShutdownAll();
             _harmony.UnpatchSelf();
         }
     }
 
-    [HarmonyPatch]
-    public static class WonderlandRPCRegistrationPatch
+    /// <summary>
+    /// BepInEx's own Awake() runs long before ZNetScene/ObjectDB populate their prefab lists, so any
+    /// subsystem setup that reads them (discovering container/fireplace/smelter/piece prefab names)
+    /// has to wait for this instead - the first point those lists are actually filled in.
+    /// </summary>
+    [HarmonyPatch(typeof(ZNetScene), "Awake")]
+    public static class WorldReadyHook
     {
-        [HarmonyPatch(typeof(ZNet), "Awake")]
         [HarmonyPostfix]
-        public static void Postfix_ZNetAwake()
+        public static void Postfix()
         {
-            WonderlandRPC.RegisterRPCs();
+            WonderlandPlugin.Instance.Subsystems.OnWorldReady();
         }
     }
 }

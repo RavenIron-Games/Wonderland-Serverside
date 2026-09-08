@@ -1,6 +1,5 @@
 using BepInEx.Configuration;
 using ServerSync;
-using UnityEngine;
 
 namespace Wonderland.Core
 {
@@ -9,139 +8,188 @@ namespace Wonderland.Core
         public static ConfigEntry<bool>? ServerConfigLocked;
         public static ConfigEntry<bool>? VerboseLogging;
 
-        // Building
-        public static ConfigEntry<float>? BuildRangeMultiplier;
-        public static ConfigEntry<bool>? StaminaFreeBuild;
-        public static ConfigEntry<bool>? DisableBuildingDecay;
-        public static ConfigEntry<float>? BuildingSupportMultiplier;
-        public static ConfigEntry<float>? AutoRepairRadius;
+        // Item flow - vacuum / auto-harvest
+        public static ConfigEntry<bool>? VacuumEnabled;
+        public static ConfigEntry<float>? VacuumInterval;
+        public static ConfigEntry<int>? VacuumBatchSize;
+        public static ConfigEntry<float>? VacuumRadius;
+        public static ConfigEntry<float>? ContainerLinkRadius;
+        public static ConfigEntry<string>? VacuumExcludedContainers;
+        public static ConfigEntry<string>? VacuumExcludedItems;
+        public static ConfigEntry<bool>? AutoHarvestEnabled;
+        public static ConfigEntry<float>? AutoHarvestRadius;
 
-        // Inventory & Vacuum
-        public static ConfigEntry<float>? StackMaxMultiplier;
-        public static ConfigEntry<float>? CarryWeightBonus;
-        public static ConfigEntry<bool>? ContainerVacuumEnabled;
-        public static ConfigEntry<float>? ContainerVacuumRadius;
-        public static ConfigEntry<float>? ContainerVacuumInterval;
+        // Item flow - production supply
+        public static ConfigEntry<bool>? ProductionSupplyEnabled;
+        public static ConfigEntry<float>? ProductionSupplyInterval;
+        public static ConfigEntry<int>? ProductionSupplyBatchSize;
+        public static ConfigEntry<float>? ProductionSupplyRange;
+        public static ConfigEntry<int>? ProductionSupplyReserve;
 
-        // Crafting
-        public static ConfigEntry<bool>? CraftFromChestsEnabled;
-        public static ConfigEntry<float>? CraftFromChestsRadius;
-        public static ConfigEntry<bool>? WorkstationNoRoof;
-        public static ConfigEntry<float>? WorkstationExtraRange;
-        public static ConfigEntry<int>? BatchCraftingMax;
+        // Item flow - sort
+        public static ConfigEntry<bool>? SortEnabled;
+        public static ConfigEntry<float>? SortInterval;
+        public static ConfigEntry<int>? SortBatchSize;
 
-        // Production & Farming & AutoFuel
-        public static ConfigEntry<bool>? PlantAnythingEnabled;
-        public static ConfigEntry<bool>? CropBiomeRestrictionsBypass;
-        public static ConfigEntry<int>? MassPlantingGridSize;
-        public static ConfigEntry<float>? CropGrowthSpeedMultiplier;
-        public static ConfigEntry<bool>? DisableCropSpaceCheck;
-        public static ConfigEntry<bool>? AutoFuelLightSources;
-        public static ConfigEntry<float>? AutoFuelRadius;
+        // Storage - stack size
+        public static ConfigEntry<bool>? StackSizeEnabled;
+        public static ConfigEntry<float>? StackSizeMultiplier;
+        public static ConfigEntry<float>? StackSizeAbsoluteMax;
+        public static ConfigEntry<string>? StackSizeExcludedPrefabs;
 
-        // Player & Combat Physics
-        public static ConfigEntry<float>? AttackSpeedMultiplier;
-        public static ConfigEntry<float>? BowDrawSpeedMultiplier;
-        public static ConfigEntry<float>? CrossbowReloadSpeedMultiplier;
-        public static ConfigEntry<float>? RunningStaminaMultiplier;
-        public static ConfigEntry<float>? SwimmingStaminaMultiplier;
-        public static ConfigEntry<float>? MiningStaminaMultiplier;
-        public static ConfigEntry<float>? FallDamageMultiplier;
-        public static ConfigEntry<bool>? SlopeClimbingLimitBypass;
+        // Storage - grid growth
+        public static ConfigEntry<bool>? GridGrowthEnabled;
+        public static ConfigEntry<int>? GridGrowthExtraRows;
+        public static ConfigEntry<string>? GridGrowthExcludedPrefabs;
 
-        // HUD & Telemetry (Client-Local Unsynced)
-        public static ConfigEntry<bool>? EnableHUD;
-        public static ConfigEntry<KeyCode>? HUDHotkey;
-        public static ConfigEntry<float>? HUDPositionX;
-        public static ConfigEntry<float>? HUDPositionY;
-        public static ConfigEntry<bool>? ShowMovementSpeed;
-        public static ConfigEntry<bool>? ShowPureStats;
-        public static ConfigEntry<bool>? ShowArmor;
-        public static ConfigEntry<bool>? ShowEnvironmentInfo;
-        public static ConfigEntry<bool>? ShowWindVector;
+        // World governor - raids
+        public static ConfigEntry<bool>? RaidBlockEnabled;
+        public static ConfigEntry<string>? RaidBlockedBiomes;
+        public static ConfigEntry<string>? RaidBlockedEvents;
 
-        // World, Portals & Raids
-        public static ConfigEntry<bool>? SinglePortalDialingEnabled;
-        public static ConfigEntry<bool>? AllowMetalsThroughPortals;
-        public static ConfigEntry<bool>? PortalLockingEnabled;
-        public static ConfigEntry<bool>? BlockHighTierRaidsInLowBiomes;
-        public static ConfigEntry<float>? CustomDayLengthMinutes;
-        public static ConfigEntry<float>? DayNightRatioPercent;
+        // World governor - night spawns
+        public static ConfigEntry<bool>? NightSpawnBlockEnabled;
+        public static ConfigEntry<string>? NightSpawnBlockedBiomes;
+        public static ConfigEntry<string>? NightSpawnBlockedCreatures;
+
+        // World governor - player cap
+        public static ConfigEntry<int>? MaxPlayerCount;
+
+        // World governor - structure upkeep
+        public static ConfigEntry<bool>? StructureUpkeepEnabled;
+        public static ConfigEntry<float>? StructureUpkeepInterval;
+        public static ConfigEntry<int>? StructureUpkeepBatchSize;
+
+        // World governor - first spawn grant
+        public static ConfigEntry<bool>? StarterGrantEnabled;
+        public static ConfigEntry<string>? StarterKitItems;
+        public static ConfigEntry<string>? StarterBoatPrefab;
+        public static ConfigEntry<float>? StarterBoatSearchRadius;
+
+        // Vitality
+        public static ConfigEntry<bool>? MaxHealthFloorEnabled;
+        public static ConfigEntry<float>? MaxHealthFloor;
+        public static ConfigEntry<float>? VitalityCheckInterval;
+
+        // Security
+        public static ConfigEntry<bool>? VitalsGuardEnabled;
+        public static ConfigEntry<float>? MaxHealthCeiling;
+        public static ConfigEntry<float>? StaminaPlausibilityCeiling;
+        public static ConfigEntry<bool>? PositionWatchEnabled;
+        public static ConfigEntry<float>? PositionWatchInterval;
+        public static ConfigEntry<float>? SpeedPlausibilityCeiling;
+        public static ConfigEntry<float>? FlyDetectionTolerance;
+        public static ConfigEntry<bool>? DamagePlausibilityEnabled;
+        public static ConfigEntry<float>? DamagePlausibilityCeiling;
+        public static ConfigEntry<bool>? ItemIntegritySweepEnabled;
+        public static ConfigEntry<float>? ItemIntegritySweepInterval;
+        public static ConfigEntry<int>? ItemIntegritySweepBatchSize;
+        public static ConfigEntry<bool>? ItemIntegritySweepCorrect;
 
         public static void Bind(ConfigFile config, ConfigSync configSync)
         {
-            // General
             ServerConfigLocked = BindSynced(config, configSync, "1 - General", "ServerConfigLocked", true, "If true, only server admins can modify synced configuration.");
             configSync.AddLockingConfigEntry(ServerConfigLocked);
-            VerboseLogging = BindLocal(config, "1 - General", "VerboseLogging", false, "Enable verbose diagnostic log messages.");
+            VerboseLogging = BindLocal(config, "1 - General", "VerboseLogging", false, "Enable verbose diagnostic log messages. Security findings always log regardless of this setting.");
 
-            // Building
-            BuildRangeMultiplier = BindSynced(config, configSync, "2 - Building", "BuildRangeMultiplier", 2.0f, "Multiplier for player building and repair reach.", 1.0f, 10.0f);
-            StaminaFreeBuild = BindSynced(config, configSync, "2 - Building", "StaminaFreeBuild", true, "Disable stamina cost when building or repairing with hammer.");
-            DisableBuildingDecay = BindSynced(config, configSync, "2 - Building", "DisableBuildingDecay", true, "Prevent wooden structural pieces from taking water/rain wear decay.");
-            BuildingSupportMultiplier = BindSynced(config, configSync, "2 - Building", "BuildingSupportMultiplier", 2.0f, "Multiplier for structural stability support propagation.", 1.0f, 10.0f);
-            AutoRepairRadius = BindSynced(config, configSync, "2 - Building", "AutoRepairRadius", 15.0f, "Radius around player to automatically repair damaged building pieces when holding hammer.", 0f, 50f);
+            VacuumEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEnabled", true, "Enable containers auto-vacuuming matching ground items nearby. Match-required: only tops up an item type a container already holds.");
+            VacuumInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumInterval", 2f, "Seconds between vacuum sweep batches.", 0.5f, 30f);
+            VacuumBatchSize = BindSyncedInt(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumBatchSize", 25, "How many container ZDOs to advance the round-robin scanner by each sweep.", 1, 500);
+            VacuumRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumRadius", 10f, "Radius around a container to vacuum matching ground items from.", 1f, 50f);
+            ContainerLinkRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "ContainerLinkRadius", 10f, "Radius used to find a sibling container for the capacity overflow guard.", 1f, 50f);
+            VacuumExcludedContainers = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumExcludedContainers", "", "Comma-separated container prefab names to exclude from vacuuming entirely.");
+            VacuumExcludedItems = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumExcludedItems", "", "Comma-separated item prefab names never to vacuum or auto-harvest.");
+            AutoHarvestEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AutoHarvestEnabled", true, "When a player harvests something, sweep in other ripe pickables of the same type nearby.");
+            AutoHarvestRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AutoHarvestRadius", 8f, "Radius around the triggering pickable (and around each player, for trigger detection) to sweep.", 1f, 30f);
 
-            // Inventory & Vacuum
-            StackMaxMultiplier = BindSynced(config, configSync, "3 - Inventory & Vacuum", "StackMaxMultiplier", 2.0f, "Multiplier for max stack size of all stackable items (e.g. 10 -> 20).", 1.0f, 20.0f);
-            CarryWeightBonus = BindSynced(config, configSync, "3 - Inventory & Vacuum", "CarryWeightBonus", 300.0f, "Additional carry weight capacity added to player base weight limit.", 0f, 2000f);
-            ContainerVacuumEnabled = BindSynced(config, configSync, "3 - Inventory & Vacuum", "ContainerVacuumEnabled", true, "Enable containers auto-vacuuming matching items from the ground.");
-            ContainerVacuumRadius = BindSynced(config, configSync, "3 - Inventory & Vacuum", "ContainerVacuumRadius", 10.0f, "Radius around containers to vacuum matching ground items.", 2.0f, 30.0f);
-            ContainerVacuumInterval = BindSynced(config, configSync, "3 - Inventory & Vacuum", "ContainerVacuumInterval", 2.0f, "Time interval in seconds between container vacuum scans.", 0.5f, 10.0f);
+            ProductionSupplyEnabled = BindSynced(config, configSync, "3 - Production Supply", "ProductionSupplyEnabled", true, "Auto-feed fuel and ore/process material to fireplaces and smelters from linked containers, even with nobody online.");
+            ProductionSupplyInterval = BindSynced(config, configSync, "3 - Production Supply", "ProductionSupplyInterval", 3f, "Seconds between production supply sweep batches.", 0.5f, 30f);
+            ProductionSupplyBatchSize = BindSyncedInt(config, configSync, "3 - Production Supply", "ProductionSupplyBatchSize", 20, "How many fireplace/smelter ZDOs to advance each scanner by per sweep.", 1, 500);
+            ProductionSupplyRange = BindSynced(config, configSync, "3 - Production Supply", "ProductionSupplyRange", 15f, "Radius to search for linked source containers.", 1f, 50f);
+            ProductionSupplyReserve = BindSyncedInt(config, configSync, "3 - Production Supply", "ProductionSupplyReserve", 1, "Minimum stock of a matching item a source container always keeps - never pulled below this.", 0, 999);
 
-            // Crafting
-            CraftFromChestsEnabled = BindSynced(config, configSync, "4 - Crafting", "CraftFromChestsEnabled", true, "Allow crafting stations and player crafting to pull items directly from nearby chests.");
-            CraftFromChestsRadius = BindSynced(config, configSync, "4 - Crafting", "CraftFromChestsRadius", 20.0f, "Radius to search for chests when pulling crafting ingredients.", 5.0f, 50.0f);
-            WorkstationNoRoof = BindSynced(config, configSync, "4 - Crafting", "WorkstationNoRoof", true, "Remove 'Workstation needs a roof' requirement for crafting and upgrading.");
-            WorkstationExtraRange = BindSynced(config, configSync, "4 - Crafting", "WorkstationExtraRange", 40.0f, "Build/crafting range extension for workstations.", 20.0f, 100.0f);
-            BatchCraftingMax = BindSynced(config, configSync, "4 - Crafting", "BatchCraftingMax", 10, "Maximum batch size for instant item crafting.", 1, 100);
+            SortEnabled = BindSynced(config, configSync, "4 - Sort", "SortEnabled", true, "Enable background stack consolidation (merging partial stacks) within containers.");
+            SortInterval = BindSynced(config, configSync, "4 - Sort", "SortInterval", 30f, "Seconds between sort sweep batches.", 5f, 300f);
+            SortBatchSize = BindSyncedInt(config, configSync, "4 - Sort", "SortBatchSize", 10, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
 
-            // Production & AutoFuel
-            PlantAnythingEnabled = BindSynced(config, configSync, "5 - Production & AutoFuel", "PlantAnythingEnabled", true, "Enable planting all wild flora, crops, bushes, and trees.");
-            CropBiomeRestrictionsBypass = BindSynced(config, configSync, "5 - Production & AutoFuel", "CropBiomeRestrictionsBypass", true, "Allow crops to grow in any biome (e.g. Barley/Flax in Meadows).");
-            MassPlantingGridSize = BindSynced(config, configSync, "5 - Production & AutoFuel", "MassPlantingGridSize", 3, "Grid size (NxN) for mass planting seeds with proper spacing.", 1, 5);
-            CropGrowthSpeedMultiplier = BindSynced(config, configSync, "5 - Production & AutoFuel", "CropGrowthSpeedMultiplier", 2.0f, "Growth speed multiplier for crops and trees.", 1.0f, 10.0f);
-            DisableCropSpaceCheck = BindSynced(config, configSync, "5 - Production & AutoFuel", "DisableCropSpaceCheck", true, "Disable 'Plant needs more space' death condition.");
-            AutoFuelLightSources = BindSynced(config, configSync, "5 - Production & AutoFuel", "AutoFuelLightSources", true, "Automatically refuel torches, sconces, campfires, and hearths from nearby containers.");
-            AutoFuelRadius = BindSynced(config, configSync, "5 - Production & AutoFuel", "AutoFuelRadius", 15.0f, "Radius around light/heat sources to scan for fuel containers.", 5.0f, 40.0f);
+            StackSizeEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeEnabled", true, "Enable the max stack size multiplier.");
+            StackSizeMultiplier = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeMultiplier", 2f, "Multiplier applied to every stackable item's vanilla max stack size.", 1f, 20f);
+            StackSizeAbsoluteMax = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeAbsoluteMax", 999f, "Hard ceiling on any single item's max stack size regardless of multiplier.", 1f, 9999f);
+            StackSizeExcludedPrefabs = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeExcludedPrefabs", "", "Comma-separated item prefab names to leave at vanilla stack size.");
+            GridGrowthEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "GridGrowthEnabled", true, "Enable real grid slot-count growth for containers.");
+            GridGrowthExtraRows = BindSyncedInt(config, configSync, "5 - Storage Capacity", "GridGrowthExtraRows", 2, "Extra grid rows added to every container's vanilla height.", 0, 20);
+            GridGrowthExcludedPrefabs = BindSynced(config, configSync, "5 - Storage Capacity", "GridGrowthExcludedPrefabs", "", "Comma-separated container prefab names to leave at vanilla grid size.");
 
-            // Player & Combat Physics
-            AttackSpeedMultiplier = BindSynced(config, configSync, "6 - Player & Combat", "AttackSpeedMultiplier", 1.25f, "Melee and unarmed attack animation speed multiplier.", 1.0f, 3.0f);
-            BowDrawSpeedMultiplier = BindSynced(config, configSync, "6 - Player & Combat", "BowDrawSpeedMultiplier", 1.5f, "Bow hold and aim draw speed acceleration multiplier.", 1.0f, 5.0f);
-            CrossbowReloadSpeedMultiplier = BindSynced(config, configSync, "6 - Player & Combat", "CrossbowReloadSpeedMultiplier", 1.5f, "Crossbow reload animation acceleration multiplier.", 1.0f, 5.0f);
-            RunningStaminaMultiplier = BindSynced(config, configSync, "6 - Player & Combat", "RunningStaminaMultiplier", 0.5f, "Stamina drain multiplier while running.", 0.0f, 1.0f);
-            SwimmingStaminaMultiplier = BindSynced(config, configSync, "6 - Player & Combat", "SwimmingStaminaMultiplier", 0.5f, "Stamina drain multiplier while swimming.", 0.0f, 1.0f);
-            MiningStaminaMultiplier = BindSynced(config, configSync, "6 - Player & Combat", "MiningStaminaMultiplier", 0.5f, "Stamina drain multiplier while pickaxing or woodcutting.", 0.0f, 1.0f);
-            FallDamageMultiplier = BindSynced(config, configSync, "6 - Player & Combat", "FallDamageMultiplier", 0.5f, "Fall damage multiplier.", 0.0f, 1.0f);
-            SlopeClimbingLimitBypass = BindSynced(config, configSync, "6 - Player & Combat", "SlopeClimbingLimitBypass", true, "Allow running up steep mountain slopes without slipping.");
+            RaidBlockEnabled = BindSynced(config, configSync, "6 - Raids", "RaidBlockEnabled", true, "Block configured raid events from triggering in configured biomes.");
+            RaidBlockedBiomes = BindSynced(config, configSync, "6 - Raids", "RaidBlockedBiomes", "Meadows,BlackForest", "Comma-separated Heightmap.Biome names to block high-tier raids in.");
+            RaidBlockedEvents = BindSynced(config, configSync, "6 - Raids", "RaidBlockedEvents", "seeker,charred,fulling,gjall", "Comma-separated case-insensitive substrings matched against the raid event name.");
 
-            // HUD & Telemetry (Client-Local Unsynced)
-            EnableHUD = BindLocal(config, "7 - HUD & Telemetry", "EnableHUD", true, "Enable dynamic IMGUI player stats overlay.");
-            HUDHotkey = BindLocal(config, "7 - HUD & Telemetry", "HUDHotkey", KeyCode.F7, "Hotkey toggle for HUD overlay.");
-            HUDPositionX = BindLocal(config, "7 - HUD & Telemetry", "HUDPositionX", 20.0f, "HUD overlay X screen position.");
-            HUDPositionY = BindLocal(config, "7 - HUD & Telemetry", "HUDPositionY", 180.0f, "HUD overlay Y screen position.");
-            ShowMovementSpeed = BindLocal(config, "7 - HUD & Telemetry", "ShowMovementSpeed", true, "Show live player movement speed (m/s).");
-            ShowPureStats = BindLocal(config, "7 - HUD & Telemetry", "ShowPureStats", true, "Show detailed HP, Stamina, and Eitr max/current/regen metrics.");
-            ShowArmor = BindLocal(config, "7 - HUD & Telemetry", "ShowArmor", true, "Show total calculated armor value.");
-            ShowEnvironmentInfo = BindLocal(config, "7 - HUD & Telemetry", "ShowEnvironmentInfo", true, "Show biome, coordinates, time of day, and weather status.");
-            ShowWindVector = BindLocal(config, "7 - HUD & Telemetry", "ShowWindVector", true, "Show live wind direction and speed indicator.");
+            NightSpawnBlockEnabled = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockEnabled", true, "Destroy configured hostile creature spawns the instant the server learns about them at night in configured biomes.");
+            NightSpawnBlockedBiomes = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedBiomes", "Meadows,BlackForest", "Comma-separated Heightmap.Biome names.");
+            NightSpawnBlockedCreatures = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedCreatures", "Draugr,Draugr_Elite,Wraith,Abomination,Deathsquito,Blob,BlobElite,StoneGolem", "Comma-separated exact creature prefab names to block.");
 
-            // World, Portals & Raids
-            SinglePortalDialingEnabled = BindSynced(config, configSync, "8 - World & Portals & Raids", "SinglePortalDialingEnabled", true, "Enable single-portal destination selection menu.");
-            AllowMetalsThroughPortals = BindSynced(config, configSync, "8 - World & Portals & Raids", "AllowMetalsThroughPortals", true, "Allow teleportation with metals, ores, and dragon eggs.");
-            PortalLockingEnabled = BindSynced(config, configSync, "8 - World & Portals & Raids", "PortalLockingEnabled", true, "Enable PIN code/password locking on portals.");
-            BlockHighTierRaidsInLowBiomes = BindSynced(config, configSync, "8 - World & Portals & Raids", "BlockHighTierRaidsInLowBiomes", true, "Prevent high-tier raids (Seekers, Charred, Furlings) from spawning in Meadows or Black Forest.");
-            CustomDayLengthMinutes = BindSynced(config, configSync, "8 - World & Portals & Raids", "CustomDayLengthMinutes", 30.0f, "Total length of a full day/night cycle in minutes (vanilla is 30).", 10.0f, 240.0f);
-            DayNightRatioPercent = BindSynced(config, configSync, "8 - World & Portals & Raids", "DayNightRatioPercent", 75.0f, "Percentage of the full cycle allocated to daylight (vanilla is ~70%).", 20.0f, 90.0f);
+            MaxPlayerCount = BindSyncedInt(config, configSync, "8 - Player Cap", "MaxPlayerCount", 10, "Maximum concurrent connected players. Vanilla hardcodes 10; this can raise or lower it.", 1, 256);
+
+            StructureUpkeepEnabled = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepEnabled", true, "Periodically reset building piece health back to max, preventing decay.");
+            StructureUpkeepInterval = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepInterval", 60f, "Seconds between structure upkeep sweep batches.", 5f, 600f);
+            StructureUpkeepBatchSize = BindSyncedInt(config, configSync, "9 - Structure Upkeep", "StructureUpkeepBatchSize", 50, "How many WearNTear ZDOs to advance the scanner by per sweep.", 1, 2000);
+
+            StarterGrantEnabled = BindSynced(config, configSync, "10 - Starter Grant", "StarterGrantEnabled", true, "Grant a one-time starter kit and boat on first character creation.");
+            StarterKitItems = BindSynced(config, configSync, "10 - Starter Grant", "StarterKitItems", "Wood:20,Stone:10,Flint:5", "Comma-separated PrefabName:Amount pairs spawned as ground items at spawn.");
+            StarterBoatPrefab = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatPrefab", "Karve", "Vanilla hull prefab name granted (e.g. Raft, Karve, VikingShip).");
+            StarterBoatSearchRadius = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatSearchRadius", 60f, "Radius to search for water near spawn to place the boat in.", 10f, 300f);
+
+            MaxHealthFloorEnabled = BindSynced(config, configSync, "11 - Vitality", "MaxHealthFloorEnabled", false, "Enforce a minimum max HP floor for all players. Max stamina/carry weight cannot be changed server-side (no ZDO-backed value exists) - see the plan doc.");
+            MaxHealthFloor = BindSynced(config, configSync, "11 - Vitality", "MaxHealthFloor", 0f, "Minimum max HP enforced on every connected player. 0 disables.", 0f, 2000f);
+            VitalityCheckInterval = BindSynced(config, configSync, "11 - Vitality", "VitalityCheckInterval", 5f, "Seconds between vitality/vitals-guard correction passes.", 1f, 60f);
+
+            VitalsGuardEnabled = BindSynced(config, configSync, "12 - Security", "VitalsGuardEnabled", true, "Clamp max HP above a configured ceiling; flag implausible current stamina.");
+            MaxHealthCeiling = BindSynced(config, configSync, "12 - Security", "MaxHealthCeiling", 0f, "Max HP above this is clamped back down. 0 disables.", 0f, 5000f);
+            StaminaPlausibilityCeiling = BindSynced(config, configSync, "12 - Security", "StaminaPlausibilityCeiling", 500f, "Current stamina above this is flagged (detect-only - there is no real max to clamp to). 0 disables.", 0f, 5000f);
+            PositionWatchEnabled = BindSynced(config, configSync, "12 - Security", "PositionWatchEnabled", true, "Flag implausible movement speed and likely fly/noclip.");
+            PositionWatchInterval = BindSynced(config, configSync, "12 - Security", "PositionWatchInterval", 3f, "Seconds between position checks.", 0.5f, 30f);
+            SpeedPlausibilityCeiling = BindSynced(config, configSync, "12 - Security", "SpeedPlausibilityCeiling", 40f, "Movement speed (m/s) above which a player is flagged.", 5f, 200f);
+            FlyDetectionTolerance = BindSynced(config, configSync, "12 - Security", "FlyDetectionTolerance", 15f, "Meters a player's Y can exceed expected ground height before being flagged. Deliberately generous - mining/caving produces real negative deltas too.", 1f, 200f);
+            DamagePlausibilityEnabled = BindSynced(config, configSync, "12 - Security", "DamagePlausibilityEnabled", false, "Flag single hits exceeding a flat damage ceiling. Least-verified item in this mod - a coarse tripwire, not a tuned model.");
+            DamagePlausibilityCeiling = BindSynced(config, configSync, "12 - Security", "DamagePlausibilityCeiling", 300f, "Total damage in one hit above which it is flagged.", 10f, 5000f);
+            ItemIntegritySweepEnabled = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepEnabled", true, "Periodically check every tracked container's and connected player's inventory for fabricated items.");
+            ItemIntegritySweepInterval = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepInterval", 30f, "Seconds between integrity sweep batches.", 5f, 600f);
+            ItemIntegritySweepBatchSize = BindSyncedInt(config, configSync, "12 - Security", "ItemIntegritySweepBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
+            ItemIntegritySweepCorrect = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepCorrect", false, "If true, remove implausible items outright instead of only logging them.");
         }
 
-        private static ConfigEntry<T> BindSynced<T>(ConfigFile cfg, ConfigSync sync, string section, string key, T def, string desc, float min = float.MinValue, float max = float.MaxValue)
+        private static ConfigEntry<float> BindSynced(ConfigFile cfg, ConfigSync sync, string section, string key, float def, string desc, float min = float.MinValue, float max = float.MaxValue)
         {
-            ConfigDescription description = (min != float.MinValue && max != float.MaxValue) 
-                ? new ConfigDescription(desc, new AcceptableValueRange<float>(min, max)) 
+            ConfigDescription description = (min != float.MinValue && max != float.MaxValue)
+                ? new ConfigDescription(desc, new AcceptableValueRange<float>(min, max))
                 : new ConfigDescription(desc);
 
             var entry = cfg.Bind(section, key, def, description);
+            sync.AddConfigEntry(entry);
+            return entry;
+        }
+
+        private static ConfigEntry<int> BindSyncedInt(ConfigFile cfg, ConfigSync sync, string section, string key, int def, string desc, int min = int.MinValue, int max = int.MaxValue)
+        {
+            ConfigDescription description = (min != int.MinValue && max != int.MaxValue)
+                ? new ConfigDescription(desc, new AcceptableValueRange<int>(min, max))
+                : new ConfigDescription(desc);
+
+            var entry = cfg.Bind(section, key, def, description);
+            sync.AddConfigEntry(entry);
+            return entry;
+        }
+
+        private static ConfigEntry<bool> BindSynced(ConfigFile cfg, ConfigSync sync, string section, string key, bool def, string desc)
+        {
+            var entry = cfg.Bind(section, key, def, new ConfigDescription(desc));
+            sync.AddConfigEntry(entry);
+            return entry;
+        }
+
+        private static ConfigEntry<string> BindSynced(ConfigFile cfg, ConfigSync sync, string section, string key, string def, string desc)
+        {
+            var entry = cfg.Bind(section, key, def, new ConfigDescription(desc));
             sync.AddConfigEntry(entry);
             return entry;
         }
