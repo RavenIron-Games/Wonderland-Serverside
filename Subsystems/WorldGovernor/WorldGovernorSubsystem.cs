@@ -21,6 +21,7 @@ namespace Wonderland.Subsystems.WorldGovernor
         public void OnWorldReady()
         {
             StructureUpkeep.Initialize();
+            PlayerCapGovernor.WarnIfCrossplayCapMismatch();
         }
 
         public void OnUpdate()

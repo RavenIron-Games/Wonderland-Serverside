@@ -53,5 +53,29 @@ namespace Wonderland.Subsystems.WorldGovernor
         {
             return WonderlandConfig.MaxPlayerCount?.Value ?? 10;
         }
+
+        /// <summary>
+        /// This transpiler raises ZNet's own connection-handshake cap, but on a crossplay server that
+        /// is only half the gate. Confirmed against the decompile (`ZPlayFabMatchmaking.MaxPlayers`,
+        /// `CreateLobbyRequest.MaxPlayers`): PlayFab's own lobby registration is hardcoded to 10
+        /// players, entirely independent of ZNet's check, whenever `-crossplay` is active
+        /// (`ZNet.m_onlineBackend == OnlineBackendType.PlayFab` - which routes *every* connected
+        /// client through PlayFab Party, not just Xbox players, once crossplay is on). Raising
+        /// MaxPlayerCount above 10 on such a server still lets Steam-direct joins in past 10, but
+        /// PlayFab-registered (Xbox, crossplay-joined) players past the 10th are rejected by PlayFab
+        /// itself regardless of what this mod does - there is no server-side lever for that half.
+        /// </summary>
+        public static void WarnIfCrossplayCapMismatch()
+        {
+            int cap = GetConfiguredCap();
+            if (cap <= 10)
+            {
+                return;
+            }
+            if (ZNet.m_onlineBackend == OnlineBackendType.PlayFab)
+            {
+                WonderlandDebug.LogWarning($"[PlayerCapGovernor] MaxPlayerCount is {cap}, but this server is running crossplay (PlayFab). PlayFab's own lobby cap is hardcoded to 10 players and is not something any mod can raise - Steam-direct joins can exceed 10, but PlayFab-registered joins (including all Xbox players) past the 10th will still be rejected by PlayFab itself.");
+            }
+        }
     }
 }

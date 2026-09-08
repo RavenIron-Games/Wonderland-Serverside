@@ -2,6 +2,7 @@ using BepInEx;
 using HarmonyLib;
 using ServerSync;
 using Wonderland.Core;
+using Wonderland.Core.Compat;
 using Wonderland.Subsystems.ItemFlow;
 using Wonderland.Subsystems.Security;
 using Wonderland.Subsystems.Storage;
@@ -29,6 +30,8 @@ namespace Wonderland
             WonderlandDebug.Init(Logger);
 
             WonderlandDebug.LogAlways($"Starting Wonderland v{ModVersion} (server-only rebuild)...");
+
+            GameShape.Detect();
 
             ConfigSync = new ConfigSync(ModGUID)
             {

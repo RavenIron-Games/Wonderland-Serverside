@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using BepInEx.Configuration;
 using ServerSync;
 
@@ -128,7 +129,7 @@ namespace Wonderland.Core
             NightSpawnBlockedBiomes = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedBiomes", "Meadows,BlackForest", "Comma-separated Heightmap.Biome names.");
             NightSpawnBlockedCreatures = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedCreatures", "Draugr,Draugr_Elite,Wraith,Abomination,Deathsquito,Blob,BlobElite,StoneGolem", "Comma-separated exact creature prefab names to block.");
 
-            MaxPlayerCount = BindSyncedInt(config, configSync, "8 - Player Cap", "MaxPlayerCount", 10, "Maximum concurrent connected players. Vanilla hardcodes 10; this can raise or lower it.", 1, 256);
+            MaxPlayerCount = BindSyncedInt(config, configSync, "8 - Player Cap", "MaxPlayerCount", 10, "Maximum concurrent connected players. Vanilla hardcodes 10; this can raise or lower it. On a crossplay (-crossplay) server, PlayFab's own lobby registration is separately hardcoded to 10 and cannot be raised by this or any mod - Steam-direct joins can exceed 10, but PlayFab/Xbox joins past the 10th are still rejected by PlayFab itself. A startup log warning appears if this is set above 10 while crossplay is active.", 1, 256);
 
             StructureUpkeepEnabled = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepEnabled", true, "Periodically reset building piece health back to max, preventing decay.");
             StructureUpkeepInterval = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepInterval", 60f, "Seconds between structure upkeep sweep batches.", 5f, 600f);
@@ -156,6 +157,135 @@ namespace Wonderland.Core
             ItemIntegritySweepInterval = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepInterval", 30f, "Seconds between integrity sweep batches.", 5f, 600f);
             ItemIntegritySweepBatchSize = BindSyncedInt(config, configSync, "12 - Security", "ItemIntegritySweepBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
             ItemIntegritySweepCorrect = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepCorrect", false, "If true, remove implausible items outright instead of only logging them.");
+
+            MigrateLegacyConfig(config);
+        }
+
+        // ------------------------------------------------------------------
+        // Legacy config migration (Fatty's pattern - see Fatty/Configuration/ConfigManager.cs).
+        //
+        // The 2.0.0 rebuild renamed or dropped every key from the pre-rebuild mod. BepInEx keys a
+        // setting by its (section, key) pair, so a rename makes Bind() find nothing: the new entry
+        // starts at its default and the admin's tuned value is left behind in the .cfg as a silent
+        // orphan. ConfigFile keeps every line it read but never bound to in its OrphanedEntries
+        // dictionary (ConfigDefinition -> raw unparsed string) - reached by reflection since its
+        // accessibility isn't part of BepInEx's public contract, and a migration that fails has to
+        // stay a one-line log rather than take the whole config down.
+        // ------------------------------------------------------------------
+        private static void MigrateLegacyConfig(ConfigFile config)
+        {
+            bool removedAny = false;
+
+            // Renamed, same concept, straightforward carry-across.
+            removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "StackMaxMultiplier", StackSizeMultiplier);
+            removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "ContainerVacuumEnabled", VacuumEnabled);
+            removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "ContainerVacuumRadius", VacuumRadius);
+            removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "ContainerVacuumInterval", VacuumInterval);
+            removedAny |= TryMigrate(config, "5 - Production & AutoFuel", "AutoFuelLightSources", ProductionSupplyEnabled);
+            removedAny |= TryMigrate(config, "5 - Production & AutoFuel", "AutoFuelRadius", ProductionSupplyRange);
+            removedAny |= TryMigrate(config, "8 - World & Portals & Raids", "BlockHighTierRaidsInLowBiomes", RaidBlockEnabled);
+
+            // Everything else pre-rebuild (combat/movement tuning, HUD, portals, craft-from-chests,
+            // farming) has no destination - those features were cut, not renamed, per the plan doc.
+            // Rather than hand-listing every one of those ~25 old keys here (a maintenance burden that
+            // drifts the moment either list changes), whatever is left in OrphanedEntries after the
+            // real migrations above is reported once as a single summary line, so an admin who goes
+            // looking for a setting that vanished gets an answer instead of silence.
+            var leftoverKeys = RemainingOrphanKeys(config);
+            if (leftoverKeys.Count > 0)
+            {
+                WonderlandDebug.LogAlways($"[Config] {leftoverKeys.Count} setting(s) from the pre-2.0.0 mod no longer apply (that feature was removed in the server-only rebuild) and will be dropped from the config file: {string.Join(", ", leftoverKeys)}");
+                removedAny = true;
+            }
+
+            if (removedAny)
+            {
+                config.Save();
+            }
+        }
+
+        private static System.Collections.IDictionary GetOrphans(ConfigFile config)
+        {
+            try
+            {
+                var property = typeof(ConfigFile).GetProperty("OrphanedEntries",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                return property?.GetValue(config, null) as System.Collections.IDictionary;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static List<string> RemainingOrphanKeys(ConfigFile config)
+        {
+            var names = new List<string>();
+            var orphans = GetOrphans(config);
+            if (orphans == null)
+            {
+                return names;
+            }
+            var keysToRemove = new List<object>();
+            foreach (System.Collections.DictionaryEntry entry in orphans)
+            {
+                if (entry.Key is ConfigDefinition def)
+                {
+                    names.Add(def.Key);
+                    keysToRemove.Add(entry.Key);
+                }
+            }
+            foreach (object key in keysToRemove)
+            {
+                orphans.Remove(key);
+            }
+            return names;
+        }
+
+        /// <summary>
+        /// Carries a renamed setting's raw value across to its new ConfigEntry, whatever T is - a
+        /// value that can't be parsed as T is not worth guessing at, so the new entry just keeps its
+        /// default and the admin is told why. Returns true if the orphan was found (and therefore
+        /// removed) regardless of whether the value could be parsed, since the dead line needs
+        /// dropping from the file either way.
+        /// </summary>
+        private static bool TryMigrate<T>(ConfigFile config, string oldSection, string oldKey, ConfigEntry<T>? target)
+        {
+            if (target == null)
+            {
+                return false;
+            }
+
+            var orphans = GetOrphans(config);
+            if (orphans == null)
+            {
+                return false;
+            }
+
+            var oldDefinition = new ConfigDefinition(oldSection, oldKey);
+            if (!orphans.Contains(oldDefinition))
+            {
+                return false;
+            }
+
+            string raw = orphans[oldDefinition] as string;
+            orphans.Remove(oldDefinition);
+
+            try
+            {
+                T value = (T)System.ComponentModel.TypeDescriptor.GetConverter(typeof(T)).ConvertFromInvariantString(raw);
+                if (Equals(value, target.Value))
+                {
+                    return true;
+                }
+                target.Value = value;
+                WonderlandDebug.LogAlways($"[Config] carried your old '{oldKey}' setting ({value}) across to '{target.Definition.Key}' after the 2.0.0 rebuild renamed it.");
+            }
+            catch (System.Exception ex)
+            {
+                WonderlandDebug.LogWarning($"[Config] could not read the old '{oldKey}' setting (value was '{raw}'): {ex.Message}. '{target.Definition.Key}' keeps its default.");
+            }
+            return true;
         }
 
         private static ConfigEntry<float> BindSynced(ConfigFile cfg, ConfigSync sync, string section, string key, float def, string desc, float min = float.MinValue, float max = float.MaxValue)

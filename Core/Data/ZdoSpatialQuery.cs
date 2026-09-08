@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Wonderland.Core.Compat;
 
 namespace Wonderland.Core.Data
 {
@@ -30,10 +31,23 @@ namespace Wonderland.Core.Data
                 return result;
             }
 
-            Vector2s sector = ZoneSystem.GetZone(worldPos);
             int area = Mathf.Max(1, Mathf.CeilToInt(radiusMeters / ZoneSystem.c_ZoneSize));
             var raw = new List<ZDO>();
-            ZDOMan.instance.FindSectorObjects(sector, area, 0, raw);
+
+            // Split into two methods, not an if/else inline, deliberately: FindNear_Native's body is
+            // statically typed against Vector2s (this mod's compile-time reference build, 0.221.13+).
+            // A method containing a call the loaded assembly doesn't have throws at JIT of THAT METHOD,
+            // taking it down even with a try/catch around the call site - so on a 0.221.12 server this
+            // whole method must never be JIT-compiled, which means never called, which is what the
+            // dispatch below guarantees. See Core/Compat/GameShape.cs.
+            if (GameShape.Detected == GameShape.Build.V0_221_13Plus_Vector2sSectors)
+            {
+                FindNear_Native(worldPos, area, raw);
+            }
+            else
+            {
+                GameShape.FindSectorObjectsOld(worldPos, area, raw);
+            }
 
             float radiusSqr = radiusMeters * radiusMeters;
             foreach (ZDO zdo in raw)
@@ -48,6 +62,12 @@ namespace Wonderland.Core.Data
                 }
             }
             return result;
+        }
+
+        private static void FindNear_Native(Vector3 worldPos, int area, List<ZDO> raw)
+        {
+            Vector2s sector = ZoneSystem.GetZone(worldPos);
+            ZDOMan.instance.FindSectorObjects(sector, area, 0, raw);
         }
 
         /// <summary>
