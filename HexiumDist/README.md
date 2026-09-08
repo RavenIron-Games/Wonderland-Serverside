@@ -1,66 +1,140 @@
-# Wonderland
+<div align="center">
 
-**A Valheim mod by [Raven Iron](https://ravenirongames.com/).**
+# 🌐 Wonderland
 
-> *No client install, ever. Wonderland runs entirely on the dedicated server — every feature below is enforced or automated by the server itself, so Steam, Xbox, PlayFab, and crossplay players all get the full experience without installing anything.*
+![Valheim Mod](https://img.shields.io/badge/Valheim-Serverside_Automation-orange.svg)
+[![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
+[![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
+[![Crossplay](https://img.shields.io/badge/Crossplay-PlayFab%2FXbox_Ready-purple.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.1.0-lightgrey.svg)]()
 
----
+*No client install, ever. The server does the work.*
 
-## What is Wonderland?
+</div>
 
-**Wonderland** is a strictly server-side automation and world-governance mod. It operates purely on ZDO data rather than live game objects, which is what makes it work on a real headless dedicated server at all — no client mod, no client config, nothing for a player to do.
-
-- **Smart drop-to-chest**: containers and carts auto-vacuum matching ground items nearby. Match-required — a container only tops up an item type it already holds, it never introduces a new one.
-- **Production auto-supply**: fireplaces, hearths, torches, smelters, and kilns stay fed with fuel *and* ore/process material from linked containers, even with nobody online. Never drains a source below a configurable reserve floor.
-- **Auto-harvest**: when a player harvests something, nearby ripe pickables of the same type get swept in too.
-- **Background sort**: partial stacks in containers quietly consolidate over time.
-- **Real capacity growth**: a stack-size multiplier and actual grid slot growth for containers and boats, with a built-in overflow guard so nobody's items get silently destroyed.
-- **Raid & night-spawn control**: block configured high-tier raids and nighttime ambient spawns in configured biomes (defaults: Meadows, BlackForest).
-- **Configurable player cap**: raise or lower vanilla's hardcoded 10-player limit.
-- **No building decay**: structures are periodically kept at full health.
-- **One-time starter grant**: new characters get a starter kit and a labeled boat, automatically, once.
-- **Security & anti-cheat**: a real max-HP ceiling (clamped, not just logged), an item-fabrication integrity sweep across every container and connected player, and detect-only flags for implausible speed, flight/noclip, and outsized hits.
+Wonderland is a strictly server-side automation and world-governance mod: every feature below runs
+entirely on the dedicated server, operating on the world's raw ZDO data instead of live game
+objects — which is what makes it work on a real headless server at all, with nobody connecting
+needing to install a thing. Steam, Xbox, PlayFab, and full crossplay parties all get the identical
+experience.
 
 ---
 
-## ServerSync & Multiplayer
+<details>
+<summary>📜 <b>Contents</b></summary>
 
-Built from the ground up for dedicated servers and crossplay worlds:
-- **Server-Authoritative**: everything above is decided and enforced by the server alone — there is no client-side logic to bypass, because there is no client mod at all.
-- **ServerSync Powered**: every numeric threshold, radius, interval, and batch size is exposed and locked from the dedicated server to any connecting client.
-- **Dual-build support**: auto-detects Valheim 0.221.12 vs 0.221.13+ at startup and bridges the one API shape that differs between them, so one build of the mod covers both.
+- [🌱 Features](#-features)
+  - [🧲 Vacuum & Auto-Harvest](#-vacuum--auto-harvest)
+  - [🔥 Production Supply](#-production-supply)
+  - [🗂️ Background Sort](#️-background-sort)
+  - [📦 Storage Capacity](#-storage-capacity)
+  - [⚔️ Raids & Night Spawns](#️-raids--night-spawns)
+  - [👥 Player Cap](#-player-cap)
+  - [🏚️ Structure Upkeep](#️-structure-upkeep)
+  - [🎁 Starter Grant](#-starter-grant)
+  - [❤️ Vitality](#️-vitality)
+  - [🛡️ Security & Anti-Cheat](#️-security--anti-cheat)
+  - [🧬 Dual-Build Compatibility](#-dual-build-compatibility)
+- [⚙️ Configuration](#️-configuration)
+- [📦 Dependencies](#-dependencies)
+- [📥 Installation](#-installation)
 
-## Known limitations (by design, not bugs)
-
-- **Max stamina and max carry weight cannot be changed server-side.** Neither is ever written to a ZDO — there is no server-side lever for either, on any Valheim build. Max HP *is* real and configurable.
-- **Crossplay servers have a second, separate 10-player cap.** `-crossplay` routes every connection through PlayFab, whose own lobby registration is hardcoded to 10 players — raising the player cap past 10 helps Steam-direct joins only. A startup warning appears if this applies to your server.
-
----
-
-## Configuration
-
-Every setting lives in `BepInEx/config/wubarrk.wonderland.cfg`, generated on first launch with a full description for each entry:
-
-`1 - General`, `2 - Vacuum & Auto-Harvest`, `3 - Production Supply`, `4 - Sort`, `5 - Storage Capacity`, `6 - Raids`, `7 - Night Spawns`, `8 - Player Cap`, `9 - Structure Upkeep`, `10 - Starter Grant`, `11 - Vitality`, `12 - Security`.
-
-**Upgrading from a pre-0.1.0 install?** Your old settings carry over automatically on first launch wherever the concept still exists (stack multiplier, vacuum enable/radius/interval, auto-fuel→production-supply, raid-block); anything tied to a removed feature is logged once and dropped.
-
----
-
-## Installation
-
-### With a Mod Manager (Recommended)
-1. Install via **Hexium** or your preferred Thunderstore-compatible mod manager, on the **server only**.
-2. Ensure **BepInExPack Valheim** is installed on the server.
-
-### Manual Installation
-1. Extract the package zip.
-2. Copy `plugins/Wonderland.dll` into the **server's** `BepInEx/plugins/` directory.
-3. Restart the server. Nothing is installed on any client, ever.
+</details>
 
 ---
 
-## Links & Community
+## 🌱 Features
 
-- **Official Website**: [https://ravenirongames.com/](https://ravenirongames.com/)
-- **Developer**: Raven Iron
+### 🧲 Vacuum & Auto-Harvest
+Containers and carts quietly pull in matching ground items within a configurable radius — **match-required**, so a chest only tops up an item type it already holds and never has a new one sprout inside it. Mining spoils, harvest drops, anything on the ground near a linked container just walks itself home. Paired with this: when a player harvests something, nearby ripe pickables of the same type get swept in too, so one swing of the axe can clear a whole stand of trees or a patch of berries instead of just the one you touched. Exclusion lists (containers and items) keep this out of anything you want left alone.
+
+### 🔥 Production Supply
+Fireplaces, hearths, torches, smelters, and kilns stay fed from linked containers within range — **fuel and process material both**, tracked separately, so a smelter never runs dry of ore just because its coal bin is full. Runs independent of anyone being online: a base doesn't go dark and a smelter doesn't go idle because its owner logged off. A configurable **reserve floor** means a source container is never drained below a minimum stock, so automation can't strip a stockpile out from under you.
+
+### 🗂️ Background Sort
+A slow, low-frequency pass quietly merges partial stacks of the same item across a base's containers. Consolidation only — a stack that's already whole is never touched, and nothing gets relocated while you're actively looking at it.
+
+### 📦 Storage Capacity
+Two independent levers, both real: a **stack-size multiplier** applied once per item type off a remembered vanilla baseline (never compounds the longer the server runs), and actual **grid slot growth** adding extra rows to every container and boat hold. Both are covered by the same **overflow guard**, which rides the sweep's own interval — any item beyond the true vanilla stack size or grid bounds gets split or relocated back to a legal position automatically, so nothing is ever silently destroyed the moment an ordinary vanilla client opens a boosted container.
+
+### ⚔️ Raids & Night Spawns
+Block configured high-tier raid events from ever triggering in configured biomes (defaults: Meadows, BlackForest) — genuinely server-authoritative, not a guess. A companion system destroys hostile night-spawn creatures matching a configured biome/tier list the instant the server registers them, so a Meadows base stays a Meadows base no matter how long it's been standing.
+
+### 👥 Player Cap
+Raises or lowers vanilla's hardcoded 10-player connection limit. Connection admission is a server decision through and through, so this is one of the few levers here with zero ambiguity about where authority lives.
+
+> ⚠️ **Crossplay note:** `-crossplay` routes every connection through PlayFab, whose own lobby registration is separately hardcoded to 10 players. Raising the cap past 10 helps Steam-direct joins only — PlayFab/Xbox joins past the 10th are still rejected by PlayFab itself, independent of this or any mod. A startup warning fires automatically if this applies to your server.
+
+### 🏚️ Structure Upkeep
+A periodic correction pass resets tracked building pieces back to full health, rather than trying to intercept the (client-owned) decay tick directly. The effect is the same as disabling decay — the mechanism is just a standing correction instead of a patch that could never reliably fire on a real dedicated server.
+
+### 🎁 Starter Grant
+New characters get a one-time starter kit and a labeled boat, automatically, the moment they spawn in for the first time — configurable kit contents, hull type, and search radius for a nearby launch spot. A per-character ZDO flag guarantees it only ever happens once, even across a rapid reconnect.
+
+### ❤️ Vitality
+Max HP is the one vitals stat that's genuinely ZDO-backed on every Valheim build, so it's the one this mod can actually enforce: an optional **floor** keeps every connected player's max HP at or above a configured minimum. Max stamina and max carry weight are not achievable server-side on any build — neither is ever written to a ZDO, so there's no server-visible value to correct. That's a structural fact about where the data lives, not a missing feature.
+
+### 🛡️ Security & Anti-Cheat
+Split honestly into what the server can actually do something about:
+- **Enforceable** — max HP above a configured ceiling is clamped back down, not just logged. A periodic **item-integrity sweep** checks every tracked container's and connected player's inventory against real item definitions and Wonderland's own configured stack/grid ceilings, flagging (or optionally removing) fabricated items.
+- **Detect-only** — implausible movement speed, a persistent gap between reported position and expected terrain height (likely flight/noclip), and single hits exceeding a configurable damage ceiling are all logged as signals for an admin to review, never auto-corrected. Rubber-banding a player back based on a guess would be worse than the problem.
+- **Structural blind spots, named honestly** — skill-level/save-file edits and ESP-style rendering cheats never reach the server at all, on any Valheim build; no amount of server-side logic changes that.
+
+### 🧬 Dual-Build Compatibility
+Auto-detects which Valheim build is running (0.221.12 vs 0.221.13+) at startup and bridges the one API shape that actually differs between them — ZDO sector coordinates — so a single compiled release covers both without needing a separate patcher or a manual switch.
+
+---
+
+## ⚙️ Configuration
+
+Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered sections, each entry documented with its own description, unit, and range right in the file.
+
+### Server-Synced (Admin Controlled)
+| Section | What it covers |
+| :--- | :--- |
+| `1 - General` | Whether the server locks synced config against client overrides (default on). |
+| `2 - Vacuum & Auto-Harvest` | Enable, interval, batch size, radius, and exclusion lists for the vacuum/auto-harvest sweep. |
+| `3 - Production Supply` | Enable, interval, batch size, range, and reserve floor for fuel/process-material auto-supply. |
+| `4 - Sort` | Enable, interval, and batch size for background stack consolidation. |
+| `5 - Storage Capacity` | Stack-size multiplier and absolute cap, grid growth extra rows, and per-prefab exclusion lists for both. |
+| `6 - Raids` | Enable, blocked biomes, and blocked raid-event name list. |
+| `7 - Night Spawns` | Enable, blocked biomes, and blocked creature prefab list. |
+| `8 - Player Cap` | Maximum concurrent connected players (default 10, vanilla's own limit). |
+| `9 - Structure Upkeep` | Enable, interval, and batch size for the no-decay correction pass. |
+| `10 - Starter Grant` | Enable, kit contents, boat hull prefab, and boat placement search radius. |
+| `11 - Vitality` | Max-HP floor enable/value and the check interval. |
+| `12 - Security` | Vitals guard (HP ceiling, stamina plausibility), position watch (speed/fly detection), damage plausibility, and the item-integrity sweep. |
+
+### Local to Your Game
+| Setting | Section | What it does |
+| :--- | :--- | :--- |
+| `VerboseLogging` | `1 - General` | Verbose diagnostic logging. Security findings always log regardless of this setting. |
+
+**Upgrading from a pre-0.1.0 install?** Your old settings carry over automatically on first launch wherever the concept still exists (stack multiplier, vacuum enable/radius/interval, auto-fuel→production-supply, raid-block); anything tied to a removed feature is logged once as a summary and dropped.
+
+---
+
+## 📦 Dependencies
+
+> ⚠️ **Requires:** BepInEx — and only BepInEx.
+
+| Dependency | Why |
+| :--- | :--- |
+| **BepInExPack Valheim** (denikson) | The mod loader (also provides HarmonyX). |
+
+## 📥 Installation
+
+Wonderland is a **server-side-only** mod — install it once, on the server, and every connected player benefits with nothing to download.
+
+**With Gale (recommended):** just install Wonderland on the server — the dependency above is pulled in for you.
+
+**Manual install:**
+1. Install **BepInExPack Valheim** on the server.
+2. Drop `Wonderland.dll` into the server's `BepInEx/plugins` folder.
+3. Restart the server. That's it — no client install, no client config, nothing for players to do.
+
+<div align="center">
+
+*A Valheim mod by [Raven Iron](https://ravenirongames.com/).*
+
+</div>

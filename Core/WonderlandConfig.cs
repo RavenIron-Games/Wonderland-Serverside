@@ -164,7 +164,7 @@ namespace Wonderland.Core
         // ------------------------------------------------------------------
         // Legacy config migration (Fatty's pattern - see Fatty/Configuration/ConfigManager.cs).
         //
-        // The 2.0.0 rebuild renamed or dropped every key from the pre-rebuild mod. BepInEx keys a
+        // The server-only rebuild renamed or dropped every key from the pre-rebuild mod. BepInEx keys a
         // setting by its (section, key) pair, so a rename makes Bind() find nothing: the new entry
         // starts at its default and the admin's tuned value is left behind in the .cfg as a silent
         // orphan. ConfigFile keeps every line it read but never bound to in its OrphanedEntries
@@ -194,7 +194,7 @@ namespace Wonderland.Core
             var leftoverKeys = RemainingOrphanKeys(config);
             if (leftoverKeys.Count > 0)
             {
-                WonderlandDebug.LogAlways($"[Config] {leftoverKeys.Count} setting(s) from the pre-2.0.0 mod no longer apply (that feature was removed in the server-only rebuild) and will be dropped from the config file: {string.Join(", ", leftoverKeys)}");
+                WonderlandDebug.LogAlways($"[Config] {leftoverKeys.Count} setting(s) from the pre-rebuild mod no longer apply (that feature was removed in the server-only rebuild) and will be dropped from the config file: {string.Join(", ", leftoverKeys)}");
                 removedAny = true;
             }
 
@@ -279,7 +279,7 @@ namespace Wonderland.Core
                     return true;
                 }
                 target.Value = value;
-                WonderlandDebug.LogAlways($"[Config] carried your old '{oldKey}' setting ({value}) across to '{target.Definition.Key}' after the 2.0.0 rebuild renamed it.");
+                WonderlandDebug.LogAlways($"[Config] carried your old '{oldKey}' setting ({value}) across to '{target.Definition.Key}' after the server-only rebuild renamed it.");
             }
             catch (System.Exception ex)
             {
