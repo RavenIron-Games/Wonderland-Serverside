@@ -11,6 +11,7 @@ namespace Wonderland.Core
     {
         private readonly List<IWonderlandSubsystem> _subsystems = new List<IWonderlandSubsystem>();
         private bool _initialized = false;
+        private bool _worldReady = false;
 
         public void Register(IWonderlandSubsystem subsystem)
         {
@@ -40,6 +41,25 @@ namespace Wonderland.Core
             }
         }
 
+        /// <summary>Fires once, from a Harmony postfix on ZNetScene.Awake - see IWonderlandSubsystem.OnWorldReady.</summary>
+        public void OnWorldReady()
+        {
+            if (!_initialized || _worldReady) return;
+            _worldReady = true;
+
+            foreach (var subsystem in _subsystems)
+            {
+                try
+                {
+                    subsystem.OnWorldReady();
+                }
+                catch (Exception ex)
+                {
+                    WonderlandDebug.LogError($"Error in subsystem '{subsystem.Name}' OnWorldReady: {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+        }
+
         public void OnUpdate()
         {
             if (!_initialized) return;
@@ -54,24 +74,6 @@ namespace Wonderland.Core
                 catch (Exception ex)
                 {
                     WonderlandDebug.LogError($"Error in subsystem '{subsystem.Name}' OnUpdate: {ex.Message}");
-                }
-            }
-        }
-
-        public void OnGUI()
-        {
-            if (!_initialized) return;
-
-            foreach (var subsystem in _subsystems)
-            {
-                if (!subsystem.IsEnabled) continue;
-                try
-                {
-                    subsystem.OnGUI();
-                }
-                catch (Exception ex)
-                {
-                    WonderlandDebug.LogError($"Error in subsystem '{subsystem.Name}' OnGUI: {ex.Message}");
                 }
             }
         }
@@ -91,6 +93,7 @@ namespace Wonderland.Core
             }
             _subsystems.Clear();
             _initialized = false;
+            _worldReady = false;
         }
 
         public static bool SafePatch(Harmony harmony, Type patchType)

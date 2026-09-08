@@ -4,14 +4,23 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>Wonderland</AssemblyName>
     <RootNamespace>Wonderland</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
 
+  <!--
+    Game DLLs below point at the playtest/1.0 snapshot (build 23105022, GAME-SNAPSHOT-playtest-build23105022),
+    not the stale pre-1.0 copy at libs-Tools root - Valheim 1.0 ships 2026-09-09 and every ZDO/field
+    fact this rebuild relies on was verified against that build's decompile. See
+    libs-Tools/REFERENCE-DLL-PROVENANCE.md. assembly_valheim needs Publicize=true because Container/
+    Inventory/Smelter/Fireplace internals this mod touches directly (m_width, m_conversion, m_maxFuel,
+    etc.) are private in the vanilla assembly.
+  -->
   <ItemGroup>
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
     <Reference Include="0Harmony">
       <HintPath>..\libs-Tools\0Harmony.dll</HintPath>
       <Private>False</Private>
@@ -21,19 +30,12 @@
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_valheim">
-      <HintPath>..\libs-Tools\assembly_valheim.dll</HintPath>
+      <HintPath>..\libs-Tools\GAME-SNAPSHOT-playtest-build23105022\Valheim dedicated server linux\valheim_server_Data\Managed\assembly_valheim.dll</HintPath>
+      <Publicize>true</Publicize>
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_utils">
-      <HintPath>..\libs-Tools\assembly_utils.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="assembly_guiutils">
-      <HintPath>..\libs-Tools\assembly_guiutils.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Unity.TextMeshPro">
-      <HintPath>..\libs-Tools\Unity.TextMeshPro.dll</HintPath>
+      <HintPath>..\libs-Tools\GAME-SNAPSHOT-playtest-build23105022\Valheim dedicated server linux\valheim_server_Data\Managed\assembly_utils.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine">
@@ -42,30 +44,6 @@
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>..\libs-Tools\UnityEngine.CoreModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>..\libs-Tools\UnityEngine.IMGUIModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>..\libs-Tools\UnityEngine.InputLegacyModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.PhysicsModule">
-      <HintPath>..\libs-Tools\UnityEngine.PhysicsModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.UI">
-      <HintPath>..\libs-Tools\UnityEngine.UI.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.UIModule">
-      <HintPath>..\libs-Tools\UnityEngine.UIModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>..\libs-Tools\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
