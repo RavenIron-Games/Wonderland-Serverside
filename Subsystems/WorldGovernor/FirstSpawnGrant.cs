@@ -6,61 +6,79 @@ using Wonderland.Core.Data;
 namespace Wonderland.Subsystems.WorldGovernor
 {
     /// <summary>
-    /// One-time starter kit + labeled boat, granted the first time a character is ever seen connected
-    /// with no Wonderland_StarterGranted flag on its own ZDO. Both are granted the same way: new,
-    /// independent ZDOs created near the player's own spawn position (ground ItemDrops for the kit,
-    /// a fresh hull ZDO for the boat) rather than anything written into the player's own inventory -
-    /// see the plan's Context section for why that path does not exist. A player's own character ZDO
-    /// is never touched with SetOwner here: ZDO.Set does not require ownership to apply locally and
-    /// still replicate (confirmed against the decompile - it only bumps DataRevision), and forcibly
-    /// reclaiming ownership of a connected player's own character would risk breaking their client's
-    /// ability to keep simulating it. Duplicate-safe via the flag field plus a short-lived in-memory
-    /// per-session lock guarding a rapid reconnect racing itself; written after the grant succeeds so
-    /// a crash mid-grant fails toward "try again next connect", never "granted twice".
+    /// One-time starter kit + labeled boat, granted the first time a character is seen connected to this
+    /// world. Both are granted the same way: new, independent ZDOs created at the player's current
+    /// position (ground ItemDrops for the kit, a fresh hull ZDO for the boat) rather than anything written
+    /// into the player's own inventory - that path does not exist, a character's bag is never networked.
+    ///
+    /// Players are found through ConnectedCharacters (peer + character ZDO), never Player.GetAllPlayers(),
+    /// which is always empty on a dedicated server. Identity is s_playerID - the stable per-character id
+    /// PLAYER-IDENTITY-FACTS.md says to persist - not the peer's connection id and not the character
+    /// ZDOID, which is regenerated on every login.
+    ///
+    /// The once-only guarantee is a world global key ("wonderland_starter_&lt;playerID&gt;"). The first
+    /// version of this file wrote a flag onto the character ZDO instead; that ZDO is per-session (a new
+    /// one is created on every connect and discarded on disconnect), so the flag vanished with it and the
+    /// grant would have repeated on every login. Global keys are saved in the world file itself, so the
+    /// record travels with the world and its backups. The key is written after the grant succeeds, with a
+    /// short in-memory per-session lock guarding a rapid reconnect racing itself, so a crash mid-grant
+    /// fails toward "try again next connect", never "granted twice". On the server, SetGlobalKey routes to
+    /// the server's own handler synchronously, so the key is readable the moment it is set.
     /// </summary>
     public static class FirstSpawnGrant
     {
-        private const string GrantedField = "Wonderland_StarterGranted";
-        private static readonly HashSet<ZDOID> _lockedThisSession = new HashSet<ZDOID>();
+        private const string KeyPrefix = "wonderland_starter_";
+        private const float PollInterval = 2f;
 
-        public static void OnUpdate()
+        private static readonly HashSet<long> _lockedThisSession = new HashSet<long>();
+        private static float _timer;
+
+        public static void OnUpdate(float dt)
         {
-            if (WonderlandConfig.StarterGrantEnabled?.Value != true)
+            if (WonderlandConfig.StarterGrantEnabled?.Value != true || ZoneSystem.instance == null)
             {
                 return;
             }
 
-            foreach (Player player in Player.GetAllPlayers())
+            _timer += dt;
+            if (_timer < PollInterval)
             {
-                if (player == null || player.m_nview == null)
+                return;
+            }
+            _timer = 0f;
+
+            foreach (ConnectedCharacter character in ConnectedCharacters.All())
+            {
+                long playerId = character.PlayerId;
+                if (playerId == 0L)
+                {
+                    continue; // Player.SetPlayerID hasn't written the identity into the ZDO yet - next pass.
+                }
+                if (_lockedThisSession.Contains(playerId))
                 {
                     continue;
                 }
-                ZDO zdo = player.m_nview.GetZDO();
-                if (zdo == null || !zdo.IsValid())
+                if (ZoneSystem.instance.GetGlobalKey(KeyPrefix + playerId))
                 {
-                    continue;
-                }
-                if (zdo.GetBool(GrantedField) || _lockedThisSession.Contains(zdo.m_uid))
-                {
+                    _lockedThisSession.Add(playerId);
                     continue;
                 }
 
-                _lockedThisSession.Add(zdo.m_uid);
-                Grant(player, zdo);
+                _lockedThisSession.Add(playerId);
+                Grant(character, playerId);
             }
         }
 
-        private static void Grant(Player player, ZDO zdo)
+        private static void Grant(ConnectedCharacter character, long playerId)
         {
-            Vector3 pos = player.transform.position;
-            string playerName = player.GetPlayerName();
+            Vector3 pos = character.Position;
+            string playerName = character.Name;
 
             GrantKit(pos);
             GrantBoat(pos, playerName);
 
-            zdo.Set(GrantedField, true);
-            WonderlandDebug.LogInfo($"[FirstSpawnGrant] granted starter kit + boat to '{playerName}' at {pos}.");
+            ZoneSystem.instance.SetGlobalKey(KeyPrefix + playerId);
+            WonderlandDebug.LogAlways($"[FirstSpawnGrant] granted starter kit + boat to '{playerName}' (playerID {playerId}) at {pos}.");
         }
 
         private static void GrantKit(Vector3 pos)
@@ -82,7 +100,10 @@ namespace Wonderland.Subsystems.WorldGovernor
                     continue;
                 }
 
+                // A prefab's template ItemData only gets m_dropPrefab from ItemDrop.Awake, which never
+                // runs for the prefab itself - and ItemDrop.DropItem instantiates from exactly that field.
                 ItemDrop.ItemData itemData = dropTemplate.m_itemData.Clone();
+                itemData.m_dropPrefab = prefab;
                 Vector2 offset = Random.insideUnitCircle * 0.6f;
                 ItemDrop.DropItem(itemData, amount, pos + new Vector3(offset.x, 0.3f, offset.y), Quaternion.identity);
                 ItemLedger.RecordTransfer("FirstSpawnGrant", itemData.m_shared.m_name, amount);
@@ -129,7 +150,7 @@ namespace Wonderland.Subsystems.WorldGovernor
                 }
             }
 
-            WonderlandDebug.LogWarning($"[FirstSpawnGrant] no water found within {searchRadius}m of spawn - placing boat at spawn position instead.");
+            WonderlandDebug.LogWarning($"[FirstSpawnGrant] no water found within {searchRadius}m of the player - placing boat at their position instead.");
             return center;
         }
     }

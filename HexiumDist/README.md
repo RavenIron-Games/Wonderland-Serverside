@@ -6,9 +6,10 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Crossplay](https://img.shields.io/badge/Crossplay-PlayFab%2FXbox_Ready-purple.svg)]()
-[![Version](https://img.shields.io/badge/Version-0.1.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.2.0-lightgrey.svg)]()
+[![Valheim 1.0](https://img.shields.io/badge/Valheim-1.0.7_Server-green.svg)]()
 
-*No client install, ever. The server does the work.*
+*No client install, ever. The server does the work. Built and live-tested on Valheim 1.0.*
 
 </div>
 
@@ -32,9 +33,8 @@ experience.
   - [👥 Player Cap](#-player-cap)
   - [🏚️ Structure Upkeep](#️-structure-upkeep)
   - [🎁 Starter Grant](#-starter-grant)
-  - [❤️ Vitality](#️-vitality)
   - [🛡️ Security & Anti-Cheat](#️-security--anti-cheat)
-  - [🧬 Dual-Build Compatibility](#-dual-build-compatibility)
+  - [🧬 Valheim 1.0 Native](#-valheim-10-native)
 - [⚙️ Configuration](#️-configuration)
 - [📦 Dependencies](#-dependencies)
 - [📥 Installation](#-installation)
@@ -55,7 +55,7 @@ Fireplaces, hearths, torches, smelters, and kilns stay fed from linked container
 A slow, low-frequency pass quietly merges partial stacks of the same item across a base's containers. Consolidation only — a stack that's already whole is never touched, and nothing gets relocated while you're actively looking at it.
 
 ### 📦 Storage Capacity
-Two independent levers, both real: a **stack-size multiplier** applied once per item type off a remembered vanilla baseline (never compounds the longer the server runs), and actual **grid slot growth** adding extra rows to every container and boat hold. Both are covered by the same **overflow guard**, which rides the sweep's own interval — any item beyond the true vanilla stack size or grid bounds gets split or relocated back to a legal position automatically, so nothing is ever silently destroyed the moment an ordinary vanilla client opens a boosted container.
+**Off by default, and honestly labeled.** The mod carries a stack-size multiplier and real grid-row growth, both applied server-side — but a vanilla client (the only kind that ever connects to a server-only mod) clamps every stack to its own vanilla maximum and discards anything stored beyond its own grid the moment it loads a chest. The **overflow guard** exists to make sure that never costs anyone an item: it rides the vacuum sweep and splits or relocates anything beyond true vanilla bounds back to a legal position before a client can load it. On a server-only install that makes the two levers self-cancelling — players never see a larger stack or a bigger grid — so they ship disabled. The guard itself stays on regardless, as a safety net for any container that somehow ends up over vanilla bounds.
 
 ### ⚔️ Raids & Night Spawns
 Block configured high-tier raid events from ever triggering in configured biomes (defaults: Meadows, BlackForest) — genuinely server-authoritative, not a guess. A companion system destroys hostile night-spawn creatures matching a configured biome/tier list the instant the server registers them, so a Meadows base stays a Meadows base no matter how long it's been standing.
@@ -69,19 +69,16 @@ Raises or lowers vanilla's hardcoded 10-player connection limit. Connection admi
 A periodic correction pass resets tracked building pieces back to full health, rather than trying to intercept the (client-owned) decay tick directly. The effect is the same as disabling decay — the mechanism is just a standing correction instead of a patch that could never reliably fire on a real dedicated server.
 
 ### 🎁 Starter Grant
-New characters get a one-time starter kit and a labeled boat, automatically, the moment they spawn in for the first time — configurable kit contents, hull type, and search radius for a nearby launch spot. A per-character ZDO flag guarantees it only ever happens once, even across a rapid reconnect.
-
-### ❤️ Vitality
-Max HP is the one vitals stat that's genuinely ZDO-backed on every Valheim build, so it's the one this mod can actually enforce: an optional **floor** keeps every connected player's max HP at or above a configured minimum. Max stamina and max carry weight are not achievable server-side on any build — neither is ever written to a ZDO, so there's no server-visible value to correct. That's a structural fact about where the data lives, not a missing feature.
+New characters get a one-time starter kit and a labeled boat, automatically, the first time they're seen in the world — configurable kit contents, hull type, and search radius for a nearby launch spot. The record is a world global key per character (`wonderland_starter_<playerID>`), saved inside the world file itself, so it only ever happens once per world — across reconnects, restarts, and backup restores alike.
 
 ### 🛡️ Security & Anti-Cheat
 Split honestly into what the server can actually do something about:
-- **Enforceable** — max HP above a configured ceiling is clamped back down, not just logged. A periodic **item-integrity sweep** checks every tracked container's and connected player's inventory against real item definitions and Wonderland's own configured stack/grid ceilings, flagging (or optionally removing) fabricated items.
-- **Detect-only** — implausible movement speed, a persistent gap between reported position and expected terrain height (likely flight/noclip), and single hits exceeding a configurable damage ceiling are all logged as signals for an admin to review, never auto-corrected. Rubber-banding a player back based on a guess would be worse than the problem.
-- **Structural blind spots, named honestly** — skill-level/save-file edits and ESP-style rendering cheats never reach the server at all, on any Valheim build; no amount of server-side logic changes that.
+- **Enforceable** — a periodic **item-integrity sweep** checks every tracked container against real item definitions and Wonderland's own configured stack/grid ceilings, flagging (or optionally removing) fabricated items. Containers only: a player's own bag is never networked to the server, so there is nothing there to check.
+- **Detect-only** — max HP above a configured ceiling, implausible current stamina, implausible movement speed, and a persistent gap between reported position and expected terrain height (likely flight/noclip) are all logged as signals for an admin to review, never auto-corrected. Expect some false positives by design: a portal trip reads as impossible speed, and a tall build reads as flight — they're signals, not verdicts. Max HP in particular *cannot* be corrected from the server — the owning client rewrites it from food every second and discards stale server writes while moving — so it's reported honestly as a signal rather than promised as a clamp. Rubber-banding a player back based on a guess would be worse than the problem.
+- **Structural blind spots, named honestly** — max stamina, carry weight, skill levels, save-file edits, and ESP-style rendering cheats never reach the server at all, on any Valheim build; no amount of server-side logic changes that. Combat hits are in the same bucket: a damage RPC goes to the victim's own client and the server only relays it, which is why there is no damage-plausibility check here.
 
-### 🧬 Dual-Build Compatibility
-Auto-detects which Valheim build is running (0.221.12 vs 0.221.13+) at startup and bridges the one API shape that actually differs between them — ZDO sector coordinates — so a single compiled release covers both without needing a separate patcher or a manual switch.
+### 🧬 Valheim 1.0 Native
+Built against the Valheim 1.0.7 dedicated-server assemblies and loaded on a real 1.0.7 Linux dedicated server before release. Every game API the mod touches was verified against the 1.0 decompile — including the sector-query API that 1.0 reshaped, which is detected by parameter shape at startup (the older 0.221.x five-argument form is still bridged by reflection, best-effort). The startup log says which path it picked.
 
 ---
 
@@ -96,27 +93,26 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 | `2 - Vacuum & Auto-Harvest` | Enable, interval, batch size, radius, and exclusion lists for the vacuum/auto-harvest sweep. |
 | `3 - Production Supply` | Enable, interval, batch size, range, and reserve floor for fuel/process-material auto-supply. |
 | `4 - Sort` | Enable, interval, and batch size for background stack consolidation. |
-| `5 - Storage Capacity` | Stack-size multiplier and absolute cap, grid growth extra rows, and per-prefab exclusion lists for both. |
+| `5 - Storage Capacity` | Stack-size multiplier and grid growth (both **off by default** — see the feature note), absolute cap, extra rows, and per-prefab exclusion lists. |
 | `6 - Raids` | Enable, blocked biomes, and blocked raid-event name list. |
 | `7 - Night Spawns` | Enable, blocked biomes, and blocked creature prefab list. |
 | `8 - Player Cap` | Maximum concurrent connected players (default 10, vanilla's own limit). |
 | `9 - Structure Upkeep` | Enable, interval, and batch size for the no-decay correction pass. |
 | `10 - Starter Grant` | Enable, kit contents, boat hull prefab, and boat placement search radius. |
-| `11 - Vitality` | Max-HP floor enable/value and the check interval. |
-| `12 - Security` | Vitals guard (HP ceiling, stamina plausibility), position watch (speed/fly detection), damage plausibility, and the item-integrity sweep. |
+| `12 - Security` | Vitals guard (HP ceiling and stamina plausibility, detect-only), position watch (speed/fly detection), and the container item-integrity sweep. |
 
 ### Local to Your Game
 | Setting | Section | What it does |
 | :--- | :--- | :--- |
 | `VerboseLogging` | `1 - General` | Verbose diagnostic logging. Security findings always log regardless of this setting. |
 
-**Upgrading from a pre-0.1.0 install?** Your old settings carry over automatically on first launch wherever the concept still exists (stack multiplier, vacuum enable/radius/interval, auto-fuel→production-supply, raid-block); anything tied to a removed feature is logged once as a summary and dropped.
+**Upgrading?** Old settings carry over automatically on first launch wherever the concept still exists (from 0.1.0: the Vitality check interval moves to the Security section; from pre-0.1.0: stack multiplier, vacuum enable/radius/interval, auto-fuel→production-supply, raid-block). Anything tied to a removed feature is logged once as a summary and dropped.
 
 ---
 
 ## 📦 Dependencies
 
-> ⚠️ **Requires:** BepInEx — and only BepInEx.
+> ⚠️ **Requires:** BepInEx (the Valheim 1.0 pack, 5.4.2350 or newer) — and only BepInEx.
 
 | Dependency | Why |
 | :--- | :--- |

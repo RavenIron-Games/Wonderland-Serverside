@@ -11,9 +11,9 @@ namespace Wonderland.Core.Data
     /// Player character inventories are NOT stored this way - ZDOVars.s_items is written only by
     /// Container-family objects (confirmed against the decompile; a character's Humanoid.m_inventory
     /// lives in memory on whichever client owns that character and is never mirrored into its ZDO).
-    /// Granting a connected player something goes through their live Player instance
-    /// (Player.GetAllPlayers()) or, for someone not yet connected, a ground-spawned ItemDrop/
-    /// Container ZDO at their spawn point - never through this class.
+    /// Granting a connected player something is done with ground-spawned ItemDrop ZDOs at their
+    /// character ZDO's position (see FirstSpawnGrant) - never through this class, and never through a
+    /// Player instance, which a dedicated server never has (see ConnectedCharacters).
     /// </summary>
     public static class ZdoInventoryIO
     {

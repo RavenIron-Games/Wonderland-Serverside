@@ -4,7 +4,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>Wonderland</AssemblyName>
     <RootNamespace>Wonderland</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <!-- Every warning here is CS8600/2/3/4/18/25 - nullable-reference-type static analysis flagging
@@ -17,12 +17,14 @@
   </PropertyGroup>
 
   <!--
-    Game DLLs below point at the playtest/1.0 snapshot (build 23105022, GAME-SNAPSHOT-playtest-build23105022),
-    not the stale pre-1.0 copy at libs-Tools root - Valheim 1.0 ships 2026-09-09 and every ZDO/field
-    fact this rebuild relies on was verified against that build's decompile. See
-    libs-Tools/REFERENCE-DLL-PROVENANCE.md. assembly_valheim needs Publicize=true because Container/
-    Inventory/Smelter/Fireplace internals this mod touches directly (m_width, m_conversion, m_maxFuel,
-    etc.) are private in the vanilla assembly.
+    Game DLLs below point at the Valheim 1.0.7 DEDICATED SERVER assemblies (libs-Tools/1.0/server: Steam
+    app 896660, build 25185644, network version 39, Linux install) - the side this server-only mod actually
+    runs on. Client and server assemblies are not interchangeable (different sizes and md5s), and the
+    libs-Tools root copies are the CLIENT set. Every ZDO/field/signature fact this mod relies on was
+    verified against libs-Tools/1.0/DECOMPILED/assembly_valheim_SERVER.decompiled.cs; see
+    libs-Tools/REFERENCE-DLL-PROVENANCE.md and 1.0/README.md. assembly_valheim needs Publicize=true because
+    Container/Inventory/Smelter/Fireplace internals this mod touches directly (m_width, m_conversion,
+    m_maxFuel, etc.) are private in the vanilla assembly.
   -->
   <ItemGroup>
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
@@ -35,29 +37,29 @@
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_valheim">
-      <HintPath>..\libs-Tools\GAME-SNAPSHOT-playtest-build23105022\Valheim dedicated server linux\valheim_server_Data\Managed\assembly_valheim.dll</HintPath>
+      <HintPath>..\libs-Tools\1.0\server\assembly_valheim.dll</HintPath>
       <Publicize>true</Publicize>
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_utils">
-      <HintPath>..\libs-Tools\GAME-SNAPSHOT-playtest-build23105022\Valheim dedicated server linux\valheim_server_Data\Managed\assembly_utils.dll</HintPath>
+      <HintPath>..\libs-Tools\1.0\server\assembly_utils.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine">
-      <HintPath>..\libs-Tools\UnityEngine.dll</HintPath>
+      <HintPath>..\libs-Tools\1.0\server\UnityEngine.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\libs-Tools\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>..\libs-Tools\1.0\server\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <!-- ServerSync.cs's client-side config-mismatch popup touches TMP_Text/MaskableGraphic directly. -->
     <Reference Include="Unity.TextMeshPro">
-      <HintPath>..\libs-Tools\Unity.TextMeshPro.dll</HintPath>
+      <HintPath>..\libs-Tools\1.0\server\Unity.TextMeshPro.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>..\libs-Tools\UnityEngine.UI.dll</HintPath>
+      <HintPath>..\libs-Tools\1.0\server\UnityEngine.UI.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

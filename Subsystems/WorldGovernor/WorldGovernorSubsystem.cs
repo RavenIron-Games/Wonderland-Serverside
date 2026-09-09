@@ -28,7 +28,7 @@ namespace Wonderland.Subsystems.WorldGovernor
         {
             float dt = Time.deltaTime;
             StructureUpkeep.OnUpdate(dt);
-            FirstSpawnGrant.OnUpdate();
+            FirstSpawnGrant.OnUpdate(dt);
         }
 
         public void Shutdown()

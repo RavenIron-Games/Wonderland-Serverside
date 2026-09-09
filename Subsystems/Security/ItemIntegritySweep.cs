@@ -10,12 +10,17 @@ namespace Wonderland.Subsystems.Security
     /// <summary>
     /// Independent of the vacuum engine's point-of-entry check: a periodic pass over every tracked
     /// container's inventory (round-robin, same ContainerRegistry prefab set VacuumEngine/SortEngine
-    /// use) and every connected player's own inventory, checking every item against
-    /// ItemSanityGuard.IsPlausible - catches a cheat that writes straight into a ZDO or a player's
-    /// live inventory and never goes anywhere near the vacuum engine. Configurable as detect-only or
-    /// detect-and-correct (removing the offending item outright is the only "correction" that makes
-    /// sense here - there's no legitimate lesser value to clamp a fabricated item stack down to the
-    /// way there is for HP).
+    /// use), checking every item against ItemSanityGuard.IsPlausible - catches a cheat that writes
+    /// straight into a container ZDO and never goes anywhere near the vacuum engine. Configurable as
+    /// detect-only or detect-and-correct (removing the offending item outright is the only "correction"
+    /// that makes sense here - there's no legitimate lesser value to clamp a fabricated stack down to).
+    ///
+    /// Containers only. A connected player's own bag is never networked - Humanoid.m_inventory lives
+    /// purely in the memory of the client that owns the character, and a dedicated server has no Player
+    /// instance to read it from either (see ZdoInventoryIO's header and ConnectedCharacters). The first
+    /// version of this file also iterated Player.GetAllPlayers(); on a dedicated server that list is
+    /// always empty, so the "player inventory" half never did anything and was removed rather than kept
+    /// as a promise the server cannot keep.
     /// </summary>
     public static class ItemIntegritySweep
     {
@@ -52,14 +57,6 @@ namespace Wonderland.Subsystems.Security
             foreach (ZDO zdo in _buffer)
             {
                 CheckContainer(zdo);
-            }
-
-            foreach (Player player in Player.GetAllPlayers())
-            {
-                if (player != null)
-                {
-                    CheckInventory(player.GetInventory(), player.GetPlayerName());
-                }
             }
         }
 

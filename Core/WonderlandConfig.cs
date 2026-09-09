@@ -67,21 +67,15 @@ namespace Wonderland.Core
         public static ConfigEntry<string>? StarterBoatPrefab;
         public static ConfigEntry<float>? StarterBoatSearchRadius;
 
-        // Vitality
-        public static ConfigEntry<bool>? MaxHealthFloorEnabled;
-        public static ConfigEntry<float>? MaxHealthFloor;
-        public static ConfigEntry<float>? VitalityCheckInterval;
-
         // Security
         public static ConfigEntry<bool>? VitalsGuardEnabled;
+        public static ConfigEntry<float>? VitalsGuardInterval;
         public static ConfigEntry<float>? MaxHealthCeiling;
         public static ConfigEntry<float>? StaminaPlausibilityCeiling;
         public static ConfigEntry<bool>? PositionWatchEnabled;
         public static ConfigEntry<float>? PositionWatchInterval;
         public static ConfigEntry<float>? SpeedPlausibilityCeiling;
         public static ConfigEntry<float>? FlyDetectionTolerance;
-        public static ConfigEntry<bool>? DamagePlausibilityEnabled;
-        public static ConfigEntry<float>? DamagePlausibilityCeiling;
         public static ConfigEntry<bool>? ItemIntegritySweepEnabled;
         public static ConfigEntry<float>? ItemIntegritySweepInterval;
         public static ConfigEntry<int>? ItemIntegritySweepBatchSize;
@@ -113,11 +107,11 @@ namespace Wonderland.Core
             SortInterval = BindSynced(config, configSync, "4 - Sort", "SortInterval", 30f, "Seconds between sort sweep batches.", 5f, 300f);
             SortBatchSize = BindSyncedInt(config, configSync, "4 - Sort", "SortBatchSize", 10, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
 
-            StackSizeEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeEnabled", true, "Enable the max stack size multiplier.");
+            StackSizeEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeEnabled", false, "Server-side max stack size multiplier. OFF by default: a vanilla client (the only kind that ever connects to a server-only mod) clamps every stack to its own vanilla maximum when it loads a container, and the overflow guard therefore splits boosted stacks back down every sweep - players never see a larger stack. Leave off unless experimenting.");
             StackSizeMultiplier = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeMultiplier", 2f, "Multiplier applied to every stackable item's vanilla max stack size.", 1f, 20f);
             StackSizeAbsoluteMax = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeAbsoluteMax", 999f, "Hard ceiling on any single item's max stack size regardless of multiplier.", 1f, 9999f);
             StackSizeExcludedPrefabs = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeExcludedPrefabs", "", "Comma-separated item prefab names to leave at vanilla stack size.");
-            GridGrowthEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "GridGrowthEnabled", true, "Enable real grid slot-count growth for containers.");
+            GridGrowthEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "GridGrowthEnabled", false, "Server-side extra grid rows for containers. OFF by default: a vanilla client cannot display rows beyond its own container size and discards anything stored there when it loads the chest, so the overflow guard relocates items out of the extra rows every sweep - players never see a bigger grid. Leave off unless experimenting.");
             GridGrowthExtraRows = BindSyncedInt(config, configSync, "5 - Storage Capacity", "GridGrowthExtraRows", 2, "Extra grid rows added to every container's vanilla height.", 0, 20);
             GridGrowthExcludedPrefabs = BindSynced(config, configSync, "5 - Storage Capacity", "GridGrowthExcludedPrefabs", "", "Comma-separated container prefab names to leave at vanilla grid size.");
 
@@ -135,25 +129,20 @@ namespace Wonderland.Core
             StructureUpkeepInterval = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepInterval", 60f, "Seconds between structure upkeep sweep batches.", 5f, 600f);
             StructureUpkeepBatchSize = BindSyncedInt(config, configSync, "9 - Structure Upkeep", "StructureUpkeepBatchSize", 50, "How many WearNTear ZDOs to advance the scanner by per sweep.", 1, 2000);
 
-            StarterGrantEnabled = BindSynced(config, configSync, "10 - Starter Grant", "StarterGrantEnabled", true, "Grant a one-time starter kit and boat on first character creation.");
+            StarterGrantEnabled = BindSynced(config, configSync, "10 - Starter Grant", "StarterGrantEnabled", true, "Grant a one-time starter kit and boat the first time a character is seen in this world. Recorded as a world global key per character (wonderland_starter_<playerID>), saved with the world.");
             StarterKitItems = BindSynced(config, configSync, "10 - Starter Grant", "StarterKitItems", "Wood:20,Stone:10,Flint:5", "Comma-separated PrefabName:Amount pairs spawned as ground items at spawn.");
             StarterBoatPrefab = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatPrefab", "Karve", "Vanilla hull prefab name granted (e.g. Raft, Karve, VikingShip).");
             StarterBoatSearchRadius = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatSearchRadius", 60f, "Radius to search for water near spawn to place the boat in.", 10f, 300f);
 
-            MaxHealthFloorEnabled = BindSynced(config, configSync, "11 - Vitality", "MaxHealthFloorEnabled", false, "Enforce a minimum max HP floor for all players. Max stamina/carry weight cannot be changed server-side (no ZDO-backed value exists) - see the plan doc.");
-            MaxHealthFloor = BindSynced(config, configSync, "11 - Vitality", "MaxHealthFloor", 0f, "Minimum max HP enforced on every connected player. 0 disables.", 0f, 2000f);
-            VitalityCheckInterval = BindSynced(config, configSync, "11 - Vitality", "VitalityCheckInterval", 5f, "Seconds between vitality/vitals-guard correction passes.", 1f, 60f);
-
-            VitalsGuardEnabled = BindSynced(config, configSync, "12 - Security", "VitalsGuardEnabled", true, "Clamp max HP above a configured ceiling; flag implausible current stamina.");
-            MaxHealthCeiling = BindSynced(config, configSync, "12 - Security", "MaxHealthCeiling", 0f, "Max HP above this is clamped back down. 0 disables.", 0f, 5000f);
+            VitalsGuardEnabled = BindSynced(config, configSync, "12 - Security", "VitalsGuardEnabled", true, "Flag max HP above a configured ceiling and implausible current stamina. Detect-only: neither can be corrected from the server - the owning client rewrites both every second and discards stale server writes while moving.");
+            VitalsGuardInterval = BindSynced(config, configSync, "12 - Security", "VitalsGuardInterval", 5f, "Seconds between vitals checks.", 1f, 60f);
+            MaxHealthCeiling = BindSynced(config, configSync, "12 - Security", "MaxHealthCeiling", 0f, "Max HP above this is flagged in the security log (once per distinct value per player). 0 disables.", 0f, 5000f);
             StaminaPlausibilityCeiling = BindSynced(config, configSync, "12 - Security", "StaminaPlausibilityCeiling", 500f, "Current stamina above this is flagged (detect-only - there is no real max to clamp to). 0 disables.", 0f, 5000f);
             PositionWatchEnabled = BindSynced(config, configSync, "12 - Security", "PositionWatchEnabled", true, "Flag implausible movement speed and likely fly/noclip.");
             PositionWatchInterval = BindSynced(config, configSync, "12 - Security", "PositionWatchInterval", 3f, "Seconds between position checks.", 0.5f, 30f);
             SpeedPlausibilityCeiling = BindSynced(config, configSync, "12 - Security", "SpeedPlausibilityCeiling", 40f, "Movement speed (m/s) above which a player is flagged.", 5f, 200f);
             FlyDetectionTolerance = BindSynced(config, configSync, "12 - Security", "FlyDetectionTolerance", 15f, "Meters a player's Y can exceed expected ground height before being flagged. Deliberately generous - mining/caving produces real negative deltas too.", 1f, 200f);
-            DamagePlausibilityEnabled = BindSynced(config, configSync, "12 - Security", "DamagePlausibilityEnabled", false, "Flag single hits exceeding a flat damage ceiling. Least-verified item in this mod - a coarse tripwire, not a tuned model.");
-            DamagePlausibilityCeiling = BindSynced(config, configSync, "12 - Security", "DamagePlausibilityCeiling", 300f, "Total damage in one hit above which it is flagged.", 10f, 5000f);
-            ItemIntegritySweepEnabled = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepEnabled", true, "Periodically check every tracked container's and connected player's inventory for fabricated items.");
+            ItemIntegritySweepEnabled = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepEnabled", true, "Periodically check every tracked container's inventory for fabricated items. Containers only - a player's own bag is never networked to the server, so there is nothing there to check.");
             ItemIntegritySweepInterval = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepInterval", 30f, "Seconds between integrity sweep batches.", 5f, 600f);
             ItemIntegritySweepBatchSize = BindSyncedInt(config, configSync, "12 - Security", "ItemIntegritySweepBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
             ItemIntegritySweepCorrect = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepCorrect", false, "If true, remove implausible items outright instead of only logging them.");
@@ -184,6 +173,9 @@ namespace Wonderland.Core
             removedAny |= TryMigrate(config, "5 - Production & AutoFuel", "AutoFuelLightSources", ProductionSupplyEnabled);
             removedAny |= TryMigrate(config, "5 - Production & AutoFuel", "AutoFuelRadius", ProductionSupplyRange);
             removedAny |= TryMigrate(config, "8 - World & Portals & Raids", "BlockHighTierRaidsInLowBiomes", RaidBlockEnabled);
+            // 0.1.0 -> 0.2.0: the Vitality section went away (its max-HP floor was verified impossible
+            // server-side); its check interval moved next to the vitals guard it actually timed.
+            removedAny |= TryMigrate(config, "11 - Vitality", "VitalityCheckInterval", VitalsGuardInterval);
 
             // Everything else pre-rebuild (combat/movement tuning, HUD, portals, craft-from-chests,
             // farming) has no destination - those features were cut, not renamed, per the plan doc.

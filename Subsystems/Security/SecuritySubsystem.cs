@@ -13,7 +13,12 @@ namespace Wonderland.Subsystems.Security
 
         public void Initialize(ConfigFile config, ConfigSync configSync, Harmony harmony)
         {
-            SubsystemRegistry.SafePatch(harmony, typeof(DamagePlausibility));
+            // No Harmony patches here any more. The former DamagePlausibility postfix on
+            // Character.RPC_Damage could never run on a dedicated server: a damage RPC is routed to the
+            // victim's OWNING peer and the server only relays it (ZRoutedRpc handles a routed RPC locally
+            // only when it is the target or the target is Everybody), and even a locally-handled ZDO RPC
+            // needs a live instance via ZNetScene.FindInstance, which the server never has away from its
+            // pinned reference position. Removed in 0.2.0 rather than shipped as a dead switch.
         }
 
         public void OnWorldReady()

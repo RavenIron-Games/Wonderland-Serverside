@@ -34,19 +34,24 @@ namespace Wonderland.Core.Data
             int area = Mathf.Max(1, Mathf.CeilToInt(radiusMeters / ZoneSystem.c_ZoneSize));
             var raw = new List<ZDO>();
 
-            // Split into two methods, not an if/else inline, deliberately: FindNear_Native's body is
-            // statically typed against Vector2s (this mod's compile-time reference build, 0.221.13+).
-            // A method containing a call the loaded assembly doesn't have throws at JIT of THAT METHOD,
-            // taking it down even with a try/catch around the call site - so on a 0.221.12 server this
-            // whole method must never be JIT-compiled, which means never called, which is what the
-            // dispatch below guarantees. See Core/Compat/GameShape.cs.
-            if (GameShape.Detected == GameShape.Build.V0_221_13Plus_Vector2sSectors)
+            // Split into separate methods, not an if/else inline, deliberately: FindNear_Native's body is
+            // statically typed against Vector2s and SimulationDistance (this mod's compile-time reference
+            // build, Valheim 1.0.7). A method containing a call the loaded assembly doesn't have throws at
+            // JIT of THAT METHOD, taking it down even with a try/catch around the call site - so on an
+            // older server this whole method must never be JIT-compiled, which means never called, which
+            // is what the dispatch below guarantees. See Core/Compat/GameShape.cs.
+            switch (GameShape.Detected)
             {
-                FindNear_Native(worldPos, area, raw);
-            }
-            else
-            {
-                GameShape.FindSectorObjectsOld(worldPos, area, raw);
+                case GameShape.Build.Release10_SimulationDistance:
+                    FindNear_Native(worldPos, area, raw);
+                    break;
+                case GameShape.Build.Legacy_FiveArgSectors:
+                    GameShape.FindSectorObjectsLegacy(worldPos, area, raw);
+                    break;
+                default:
+                    // Unrecognised sector API - GameShape.Detect already logged it once, loudly. An empty
+                    // result here is the honest answer; guessing at a call shape is how a hot method dies.
+                    return result;
             }
 
             float radiusSqr = radiusMeters * radiusMeters;
@@ -67,7 +72,12 @@ namespace Wonderland.Core.Data
         private static void FindNear_Native(Vector3 worldPos, int area, List<ZDO> raw)
         {
             Vector2s sector = ZoneSystem.GetZone(worldPos);
-            ZDOMan.instance.FindSectorObjects(sector, area, 0, raw);
+            // classic: true reproduces the pre-1.0 square-ring sweep (every sector within `area` rings).
+            // Without it, 1.0.7 filters each ring through ZoneSystem.ZonesWithinRadius into a disc that
+            // drops the corner sectors, and the metre-radius post-filter below would then be applied to a
+            // set that already missed objects sitting diagonally across a sector boundary. far = 0 is the
+            // old distantArea 0 - Wonderland never wants distant-only ZDOs in a radius query.
+            ZDOMan.instance.FindSectorObjects(sector, new SimulationDistance(area, 0, classic: true), raw);
         }
 
         /// <summary>

@@ -7,117 +7,135 @@ using UnityEngine;
 namespace Wonderland.Core.Compat
 {
     /// <summary>
-    /// Detects which of the two Valheim PTB builds this mod might run against - 0.221.12 (build
-    /// 21981590, network version 36, ZDO sectors are Vector2i) or 0.221.13+/1.0 (build 23105022+,
-    /// network version 37, ZDO sectors are Vector2s) - and bridges the one API shape difference
-    /// Wonderland's own code actually touches between them: ZoneSystem.GetZone(Vector3) and
-    /// ZDOMan.FindSectorObjects(sector, ...), used by Core/Data/ZdoSpatialQuery.cs for every radius
-    /// query in the mod.
+    /// Detects which shape of the sector API the running game exposes and bridges the one call
+    /// Wonderland makes through it - ZDOMan.FindSectorObjects, keyed by ZoneSystem.GetZone(Vector3) -
+    /// which Core/Data/ZdoSpatialQuery.FindNear uses for every radius query in the mod.
     ///
-    /// Ground truth: libs-Tools/VALHEIM-1.0-MIGRATION-FACTS.md, reconciled against both decompiles.
-    /// Everything else Wonderland calls (Container, Inventory, ItemDrop, Smelter, Fireplace, Pickable,
-    /// WearNTear, Player, ZDO.Get/Set, ZNet.RPC_PeerInfo, RandEventSystem.SetRandomEvent, EnvMan.IsNight,
-    /// WorldGenerator.GetHeight/GetBiome, ZDOMan.CreateNewZDO/GetAllZDOsWithPrefabIterative,
-    /// Character.RPC_Damage) is confirmed unchanged between these two builds per that doc - no bridge
-    /// needed there, and adding one anyway would be guessing at a problem that doesn't exist.
+    /// Two shapes exist (ground truth: libs-Tools/1.0/DECOMPILED for the release, the OLD-DECOMPILED-*
+    /// folders for the older builds; note VALHEIM-1.0-MIGRATION-FACTS.md's sector row describes the
+    /// playtest, not what shipped):
     ///
-    /// Wonderland compiles against the 0.221.13 assembly (see the csproj), so the 0.221.13+ path below
-    /// is ordinary, statically-typed, zero-overhead code. The 0.221.12 path is pure reflection with no
-    /// compile-time reference to Vector2i's sibling type or the old FindSectorObjects overload - a
-    /// compile-time binding to a member that doesn't exist on the loaded assembly throws at JIT of the
-    /// CALLING method, taking the whole method down even with a try/catch inside it, so the two paths
-    /// live in completely separate methods and only the one the detected build actually needs ever
-    /// gets JIT-compiled at all. This is the same rule libs-Tools/VALHEIM-1.0-MIGRATION-FACTS.md states
-    /// explicitly ("late-bind anything that moved, or gate the call behind a separate method"), and the
-    /// same shape as TheEye's own Core/Compat/GameShape.cs, the workspace's worked example for this
-    /// exact problem - this file follows that name and pattern deliberately.
+    ///  - Release 1.0.7+ (server build 25185644, network version 39):
+    ///    FindSectorObjects(Vector2s sector, SimulationDistance distance, List&lt;ZDO&gt; near, List&lt;ZDO&gt; distant = null).
+    ///    The old (int area, int distantArea) pair collapsed into the SimulationDistance struct, and
+    ///    unless IsClassic is set the sweep is a disc filtered through ZoneSystem.ZonesWithinRadius
+    ///    rather than the square ring older builds swept. Wonderland compiles against this build, so
+    ///    this is the native, statically-typed path.
+    ///  - Legacy five-arg (0.221.12 with Vector2i sectors; the 0.221.13 playtest with Vector2s sectors):
+    ///    FindSectorObjects(sector, int area, int distantArea, List&lt;ZDO&gt;, List&lt;ZDO&gt;). Reached purely by
+    ///    reflection, passing the boxed sector object GetZone hands back straight through, so neither
+    ///    sector type is ever named at compile time.
+    ///
+    /// The mono rule that dictates this layout (VALHEIM-1.0-MIGRATION-FACTS.md; TheEye's own
+    /// Core/Compat/GameShape.cs is the workspace's worked example): a compile-time binding to a member
+    /// the loaded assembly lacks throws at JIT of the CALLING method, taking the whole method down even
+    /// with a try/catch inside it. So the native path lives in its own method that is only ever called -
+    /// and therefore only ever JIT-compiled - once Detect() has confirmed the release shape, and Detect()
+    /// itself compares type NAMES rather than using typeof() on anything that might be missing: a
+    /// typeof(SimulationDistance) or typeof(Vector2s) inside Detect() would be exactly the binding the
+    /// rule forbids on an older build.
     /// </summary>
     public static class GameShape
     {
         public enum Build
         {
             Unknown,
-            V0_221_12_Vector2iSectors,
-            V0_221_13Plus_Vector2sSectors
+            /// <summary>Valheim 1.0.7+: FindSectorObjects takes a SimulationDistance struct.</summary>
+            Release10_SimulationDistance,
+            /// <summary>0.221.12 / 0.221.13 playtest: FindSectorObjects takes (int area, int distantArea).</summary>
+            Legacy_FiveArgSectors
         }
 
         public static Build Detected { get; private set; } = Build.Unknown;
 
-        private static MethodInfo _oldGetZone;
-        private static MethodInfo _oldFindSectorObjects;
-        private static FieldInfo _oldSectorX;
-        private static FieldInfo _oldSectorY;
+        private static bool _probed;
+        private static MethodInfo _legacyGetZone;
+        private static MethodInfo _legacyFindSectorObjects;
 
         /// <summary>
-        /// Probes the loaded assembly by reflection only (inspecting MethodInfo, never invoking or
-        /// statically referencing the old type) - safe to call unconditionally on either build. Call
-        /// once at startup before anything in ZdoSpatialQuery runs.
+        /// Probes the loaded assembly by reflection only (inspecting MethodInfo/ParameterInfo, never
+        /// invoking or statically referencing a possibly-missing type) - safe to call unconditionally on
+        /// any build. Call once at startup before anything in ZdoSpatialQuery runs.
         /// </summary>
         public static void Detect()
         {
-            if (Detected != Build.Unknown)
+            if (_probed)
             {
                 return;
             }
+            _probed = true;
 
             MethodInfo getZone = typeof(ZoneSystem).GetMethod("GetZone", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(Vector3) }, null);
-            bool is13Plus = getZone != null && getZone.ReturnType == typeof(Vector2s);
-
-            if (is13Plus)
+            if (getZone == null)
             {
-                Detected = Build.V0_221_13Plus_Vector2sSectors;
-                WonderlandDebug.LogAlways("[GameShape] detected game build 0.221.13+ (Vector2s ZDO sectors) - using the native fast path.");
+                WonderlandDebug.LogWarning("[GameShape] ZoneSystem.GetZone(Vector3) not found at all - every radius query in this mod will return nothing on this build until it is re-verified against the decompile.");
+                return;
+            }
+            Type sectorType = getZone.ReturnType;
+
+            MethodInfo[] candidates = typeof(ZDOMan)
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Where(m => m.Name == "FindSectorObjects")
+                .ToArray();
+
+            if (candidates.Any(m => IsReleaseShape(m, sectorType)))
+            {
+                Detected = Build.Release10_SimulationDistance;
+                WonderlandDebug.LogAlways($"[GameShape] detected the Valheim 1.0.7+ sector API ({sectorType.Name} sectors, SimulationDistance) - using the native path.");
                 return;
             }
 
-            Detected = Build.V0_221_12_Vector2iSectors;
-            InitOldPath(getZone);
-            WonderlandDebug.LogAlways("[GameShape] detected game build 0.221.12 (Vector2i ZDO sectors) - bridging via reflection. If this looks wrong, libs-Tools/VALHEIM-1.0-MIGRATION-FACTS.md needs a fresh diff against whatever build is actually running.");
+            _legacyFindSectorObjects = candidates.FirstOrDefault(m => IsLegacyShape(m, sectorType));
+            if (_legacyFindSectorObjects != null)
+            {
+                _legacyGetZone = getZone;
+                Detected = Build.Legacy_FiveArgSectors;
+                WonderlandDebug.LogAlways($"[GameShape] detected a pre-1.0 sector API ({sectorType.Name} sectors, five-arg FindSectorObjects) - bridging via reflection. This mod is built and tested against 1.0.7; treat this path as best-effort.");
+                return;
+            }
+
+            WonderlandDebug.LogWarning($"[GameShape] ZDOMan.FindSectorObjects has an unrecognised shape on this build ({candidates.Length} overload(s), sectors are {sectorType.Name}) - every radius query in this mod will return nothing until Core/Compat/GameShape.cs is re-verified against this build's decompile.");
         }
 
-        private static void InitOldPath(MethodInfo getZone)
+        private static bool IsReleaseShape(MethodInfo m, Type sectorType)
         {
-            _oldGetZone = getZone;
-            if (_oldGetZone == null)
-            {
-                WonderlandDebug.LogWarning("[GameShape] ZoneSystem.GetZone(Vector3) not found at all - radius queries will return nothing on this build until re-verified.");
-                return;
-            }
+            ParameterInfo[] p = m.GetParameters();
+            return p.Length == 4
+                && p[0].ParameterType == sectorType
+                && p[1].ParameterType.Name == "SimulationDistance"
+                && p[2].ParameterType == typeof(List<ZDO>);
+        }
 
-            Type sectorType = _oldGetZone.ReturnType;
-            _oldSectorX = sectorType.GetField("x", BindingFlags.Public | BindingFlags.Instance);
-            _oldSectorY = sectorType.GetField("y", BindingFlags.Public | BindingFlags.Instance);
-
-            _oldFindSectorObjects = typeof(ZDOMan).GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "FindSectorObjects" && m.GetParameters().Length == 5 && m.GetParameters()[0].ParameterType == sectorType);
-
-            if (_oldFindSectorObjects == null)
-            {
-                WonderlandDebug.LogWarning("[GameShape] ZDOMan.FindSectorObjects(sector, area, distantArea, list, list) not found with the expected shape - radius queries will return nothing on this build until re-verified.");
-            }
+        private static bool IsLegacyShape(MethodInfo m, Type sectorType)
+        {
+            ParameterInfo[] p = m.GetParameters();
+            return p.Length == 5
+                && p[0].ParameterType == sectorType
+                && p[1].ParameterType == typeof(int)
+                && p[2].ParameterType == typeof(int)
+                && p[3].ParameterType == typeof(List<ZDO>);
         }
 
         /// <summary>
-        /// The 0.221.12 bridge for ZdoSpatialQuery.FindNear's inner call. Never invoked when Detected
-        /// is V0_221_13Plus, so its use of the reflected members above (resolved once, from a build
-        /// where they're known to exist) never runs against a null MethodInfo in practice - callers
-        /// still guard on null defensively since Detect() logs but does not throw when a probe fails.
+        /// The legacy bridge for ZdoSpatialQuery.FindNear's inner call: GetZone's boxed result is handed
+        /// straight to the five-arg FindSectorObjects with distantArea 0, which is the old square-ring
+        /// sweep of <paramref name="area"/> sectors around the anchor. Never invoked on the release build.
         /// </summary>
-        public static void FindSectorObjectsOld(Vector3 worldPos, int area, List<ZDO> results)
+        public static void FindSectorObjectsLegacy(Vector3 worldPos, int area, List<ZDO> results)
         {
-            if (_oldGetZone == null || _oldFindSectorObjects == null || _oldSectorX == null || _oldSectorY == null)
+            if (_legacyGetZone == null || _legacyFindSectorObjects == null || ZDOMan.instance == null)
             {
                 return;
             }
 
             try
             {
-                object sector = _oldGetZone.Invoke(null, new object[] { worldPos });
-                _oldFindSectorObjects.Invoke(ZDOMan.instance, new object[] { sector, area, 0, results, null });
+                object sector = _legacyGetZone.Invoke(null, new object[] { worldPos });
+                _legacyFindSectorObjects.Invoke(ZDOMan.instance, new object[] { sector, area, 0, results, null });
             }
             catch (Exception ex)
             {
-                WonderlandDebug.LogWarning($"[GameShape] 0.221.12 sector bridge failed: {ex.GetType().Name}: {ex.Message}");
+                WonderlandDebug.LogWarning($"[GameShape] legacy sector bridge failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
     }

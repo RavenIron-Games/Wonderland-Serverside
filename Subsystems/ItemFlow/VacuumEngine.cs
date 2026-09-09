@@ -10,8 +10,9 @@ namespace Wonderland.Subsystems.ItemFlow
     /// Two triggers sharing one "move items toward a container" engine:
     ///  - Drop-to-chest: every tracked container gets a periodic radius sweep for matching ground
     ///    items (match-required - a container only tops up an item type it already holds).
-    ///  - Auto-harvest: anchored to each connected player (never a global sweep - a Pickable's
-    ///    picked/present ZDO state is only worth checking where someone might actually be harvesting),
+    ///  - Auto-harvest: anchored to each connected player's character ZDO (never a global sweep - a
+    ///    Pickable's picked/present ZDO state is only worth checking where someone might actually be
+    ///    harvesting),
     ///    watches for a ripe Pickable near that player flipping to picked, and on that transition,
     ///    sweeps the surrounding radius for other ready Pickables of the same type. Those get
     ///    "harvested" purely at the ZDO layer (see HarvestPickable below) rather than through the real
@@ -27,6 +28,7 @@ namespace Wonderland.Subsystems.ItemFlow
         private static float _vacuumTimer;
         private static readonly List<ZDO> _scanBuffer = new List<ZDO>();
         private static readonly Dictionary<ZDOID, bool> _lastPicked = new Dictionary<ZDOID, bool>();
+        private const int MaxTrackedPickables = 50000;
 
         public static void Initialize()
         {
@@ -229,13 +231,18 @@ namespace Wonderland.Subsystems.ItemFlow
         private static void ProcessHarvestTriggers()
         {
             float radius = WonderlandConfig.AutoHarvestRadius?.Value ?? 8f;
-            foreach (Player player in Player.GetAllPlayers())
+            if (_lastPicked.Count > MaxTrackedPickables)
             {
-                if (player == null)
-                {
-                    continue;
-                }
-                List<ZDO> nearby = ZdoSpatialQuery.FindNear(player.transform.position, radius);
+                // Every pickable ever seen near a player over the server's life would otherwise stay here.
+                // A reset only costs one missed trigger per pickable, and only right after the reset.
+                _lastPicked.Clear();
+            }
+
+            // Anchored to each connected player's character ZDO - never Player.GetAllPlayers(), which is
+            // the local instance list and always empty on a dedicated server (see ConnectedCharacters).
+            foreach (ConnectedCharacter character in ConnectedCharacters.All())
+            {
+                List<ZDO> nearby = ZdoSpatialQuery.FindNear(character.Position, radius);
                 foreach (ZDO zdo in nearby)
                 {
                     GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
@@ -307,7 +314,10 @@ namespace Wonderland.Subsystems.ItemFlow
                 return;
             }
 
+            // A prefab's template ItemData only gets m_dropPrefab from ItemDrop.Awake, which never runs
+            // for the prefab itself - and ItemDrop.DropItem instantiates from exactly that field.
             ItemDrop.ItemData itemData = dropTemplate.m_itemData.Clone();
+            itemData.m_dropPrefab = pickableTemplate.m_itemPrefab;
             ItemDrop.DropItem(itemData, amount, zdo.GetPosition() + Vector3.up * 0.3f, Quaternion.identity);
 
             zdo.Set(ZDOVars.s_picked, true);

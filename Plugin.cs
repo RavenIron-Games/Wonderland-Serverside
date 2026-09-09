@@ -6,7 +6,6 @@ using Wonderland.Core.Compat;
 using Wonderland.Subsystems.ItemFlow;
 using Wonderland.Subsystems.Security;
 using Wonderland.Subsystems.Storage;
-using Wonderland.Subsystems.Vitality;
 using Wonderland.Subsystems.WorldGovernor;
 
 namespace Wonderland
@@ -16,7 +15,7 @@ namespace Wonderland
     {
         public const string ModGUID = "wubarrk.wonderland";
         public const string ModName = "Wonderland";
-        public const string ModVersion = "0.1.0";
+        public const string ModVersion = "0.2.0";
 
         public static WonderlandPlugin Instance { get; private set; } = null!;
         public static ConfigSync ConfigSync { get; private set; } = null!;
@@ -29,7 +28,7 @@ namespace Wonderland
             Instance = this;
             WonderlandDebug.Init(Logger);
 
-            WonderlandDebug.LogAlways($"Starting Wonderland v{ModVersion} (server-only rebuild)...");
+            WonderlandDebug.LogAlways($"Starting Wonderland v{ModVersion} (server-only, built for Valheim 1.0.7)...");
 
             GameShape.Detect();
 
@@ -54,7 +53,6 @@ namespace Wonderland
             Subsystems.Register(new ItemFlowSubsystem());
             Subsystems.Register(new StorageSubsystem());
             Subsystems.Register(new WorldGovernorSubsystem());
-            Subsystems.Register(new VitalitySubsystem());
             Subsystems.Register(new SecuritySubsystem());
         }
 
