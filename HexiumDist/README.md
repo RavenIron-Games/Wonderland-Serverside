@@ -6,7 +6,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Crossplay](https://img.shields.io/badge/Crossplay-PlayFab%2FXbox_Ready-purple.svg)]()
-[![Version](https://img.shields.io/badge/Version-0.2.3-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.2.5-lightgrey.svg)]()
 [![Valheim 1.0](https://img.shields.io/badge/Valheim-1.0.7_Server-green.svg)]()
 
 *No client install, ever. The server does the work. Built and live-tested on Valheim 1.0.*

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.5
+
+Found by watching a live 0.2.4 test server rather than by reading code.
+
+### Fixed
+- **New players flagged as cheating by the intro flight.** The Valkyrie carries a brand-new character
+  hundreds of metres up before it ever touches down, and the fly/noclip check flagged that as suspicious -
+  three warnings against one player before they had landed once, aimed at exactly the people least likely
+  to be cheating. Nothing is flagged now until a character has been seen on the ground at least once in
+  the session.
+- **Starter grant could still fire before the player had really landed.** Being near the spawn altar was
+  treated as arrival on its own, so a character still descending was granted roughly 9m above the altar.
+  Altar proximity now only buys extra vertical allowance (the stamped platform genuinely sits above base
+  terrain, which `WorldGenerator.GetHeight` knows nothing about) - it is no longer a substitute for having
+  touched down. A short settle delay was added on top, so the drop lands at the player's feet rather than
+  raining down behind them.
+
+### Changed
+- **Logging that matters no longer hides behind verbose mode.** Ledger *rejections* - an item that could
+  not go where the mod intended - now always log, as does the stack-capacity summary, and a one-line
+  storage summary at startup states whether stack sizing and grid growth actually engaged and by how much.
+  Individual transfers stay on verbose. Diagnosing a suspected duplication previously required turning
+  verbose on and reproducing it, which meant the interesting event had already been missed.
+
+## 0.2.4
+
+Both fixes below were diagnosed from a live 0.2.3 server log rather than from reading the code.
+
+### Fixed
+- **Starter kit and boat delivered mid-air to anyone who watches the intro.** The grant had a 60-second
+  fallback that fired regardless of where the character actually was. Players who skip the intro spawn at
+  the altar and were fine; players who sit through the Valkyrie flight were still airborne when it expired,
+  so the kit was dropped from the sky and the boat was placed in whatever water could be found from up
+  there - one grant landed at (539, 190, 275) with its Karve dumped 266m away. The grant no longer fires on
+  a timeout at all: it waits for a genuine arrival, which is safe because the intro ends at the same spawn
+  the skip route uses. The ground-height test is now also paired with a movement check, since elevation
+  alone reads as "landed" whenever the Valkyrie passes over high terrain.
+- **Starter boats piling up on one spot.** Every player spawning at the same altar asked for the nearest
+  water and got the same answer, so hulls stacked - four Karves ended up within a metre of each other.
+  Candidate spots are now rejected if another ship already sits within 12m, so the search walks outward to
+  clear water. Checked against ship ZDOs rather than live objects, since a dedicated server has no instance
+  for a hull nobody is standing next to.
+
 ## 0.2.3
 
 Audited every change in 0.2.1/0.2.2 against the 1.0.7 dedicated-server decompile before release. Neither

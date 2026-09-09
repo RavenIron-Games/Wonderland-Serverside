@@ -1,6 +1,6 @@
 {
     "name": "Wonderland",
-    "version_number": "0.2.3",
+    "version_number": "0.2.5",
     "website_url": "https://ravenirongames.com/",
     "description": "Strictly server-side Valheim mod - made for 1.0- no client install ever needed. Smart item automation, capacity growth, starter grants, and anti-cheat - full PlayFab/Xbox/crossplay support.",
     "dependencies": [

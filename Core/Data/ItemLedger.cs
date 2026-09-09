@@ -52,7 +52,10 @@ namespace Wonderland.Core.Data
         {
             _totalRejected += amount;
             Append(new Entry(subsystem, itemName, amount, credited: false));
-            WonderlandDebug.LogInfo($"[ItemLedger] {subsystem} rejected {amount}x {itemName}: {reason}");
+            // Always visible, unlike transfers: a rejection means items could not go where the mod
+            // intended them to, which is exactly the case an operator needs to see without first having
+            // to turn verbose logging on and reproduce it.
+            WonderlandDebug.LogAlways($"[ItemLedger] {subsystem} rejected {amount}x {itemName}: {reason}");
         }
 
         private static void Append(Entry entry)

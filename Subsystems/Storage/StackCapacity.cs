@@ -65,7 +65,7 @@ namespace Wonderland.Subsystems.Storage
                 changed += ApplyToPrefabs(ZNetScene.instance.m_prefabs, visited);
             }
             _applied = true;
-            WonderlandDebug.LogInfo($"[StackCapacity] applied x{WonderlandConfig.StackSizeMultiplier?.Value} to {changed} item prefabs.");
+            WonderlandDebug.LogAlways($"[StackCapacity] applied x{WonderlandConfig.StackSizeMultiplier?.Value} to {changed} item prefabs (absolute cap {WonderlandConfig.StackSizeAbsoluteMax?.Value}).");
         }
 
         public static bool HasApplied => _applied;

@@ -31,6 +31,12 @@ namespace Wonderland.Subsystems.Storage
         {
             StackCapacity.Apply();
             ItemCache.Initialize();
+
+            // Stated once at startup so it is possible to tell from a log alone whether the sizing
+            // features actually engaged, rather than inferring it from container behaviour in game.
+            WonderlandDebug.LogAlways(
+                $"[Storage] stack sizing {(WonderlandConfig.StackSizeEnabled?.Value == true ? $"ON x{WonderlandConfig.StackSizeMultiplier?.Value}" : "off")}, " +
+                $"grid growth {(WonderlandConfig.GridGrowthEnabled?.Value == true ? $"ON +{WonderlandConfig.GridGrowthExtraRows?.Value} row(s)" : "off")}.");
         }
 
         public void OnUpdate()

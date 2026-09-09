@@ -23,6 +23,7 @@ namespace Wonderland.Subsystems.Security
         private static float _timer;
         private static readonly Dictionary<ZDOID, (Vector3 pos, float time)> _lastSample = new Dictionary<ZDOID, (Vector3, float)>();
         private static readonly HashSet<ZDOID> _seenThisPass = new HashSet<ZDOID>();
+        private static readonly HashSet<ZDOID> _hasBeenGrounded = new HashSet<ZDOID>();
         private static readonly List<ZDOID> _stale = new List<ZDOID>();
 
         public static void OnUpdate(float dt)
@@ -68,10 +69,20 @@ namespace Wonderland.Subsystems.Security
                 if (WorldGenerator.instance != null)
                 {
                     float groundHeight = WorldGenerator.instance.GetHeight(pos.x, pos.z);
-                    if (pos.y - groundHeight > heightTolerance)
+                    float above = pos.y - groundHeight;
+                    if (above <= heightTolerance)
                     {
-                        AuditLog.Flag("PositionWatch", name, $"reported Y {pos.y:F1} is {pos.y - groundHeight:F1}m above expected ground height {groundHeight:F1} - possible fly/noclip.");
+                        _hasBeenGrounded.Add(uid);
                     }
+                    else if (_hasBeenGrounded.Contains(uid))
+                    {
+                        AuditLog.Flag("PositionWatch", name, $"reported Y {pos.y:F1} is {above:F1}m above expected ground height {groundHeight:F1} - possible fly/noclip.");
+                    }
+
+                    // Nothing is flagged until the character has been seen on the ground at least once
+                    // this session. The Valkyrie intro carries a brand-new character hundreds of metres
+                    // up before it ever touches down, which flagged three fly/noclip warnings against a
+                    // player who had not yet landed - the people least likely to be cheating.
                 }
             }
 
@@ -88,6 +99,7 @@ namespace Wonderland.Subsystems.Security
             foreach (ZDOID uid in _stale)
             {
                 _lastSample.Remove(uid);
+                _hasBeenGrounded.Remove(uid);
             }
         }
     }

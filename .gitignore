@@ -8,3 +8,6 @@ obj/
 *.zip
 HexiumDist/plugins/*.dll
 HexiumDist/*-v*/
+
+# Server logs copied in for diagnosis - never part of the mod
+*.log

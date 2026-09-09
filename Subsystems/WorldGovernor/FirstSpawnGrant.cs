@@ -32,9 +32,28 @@ namespace Wonderland.Subsystems.WorldGovernor
 
         private const float StuckWarnSeconds = 60f;
 
+        /// <summary>
+        /// Metres a character may move between two polls and still count as standing on the ground. The
+        /// Valkyrie covers the intro flight far faster than this; a player on foot never does.
+        /// </summary>
+        private const float FlightSpeedThreshold = 25f;
+
+        /// <summary>Seconds a character must be present and settled before anything is granted.</summary>
+        private const float MinDwellSeconds = 5f;
+
+        /// <summary>Metres above base terrain that still counts as standing on it.</summary>
+        private const float GroundTolerance = 4f;
+
+        /// <summary>Looser ceiling at the spawn altar, whose stamped platform sits above base terrain.</summary>
+        private const float TempleVerticalAllowance = 15f;
+
+        /// <summary>Metres of clear water a starter boat needs around it, so hulls stop stacking.</summary>
+        private const float BoatClearance = 12f;
+
         private static readonly HashSet<long> _lockedThisSession = new HashSet<long>();
         private static readonly Dictionary<long, float> _pendingPlayerWait = new Dictionary<long, float>();
         private static readonly HashSet<long> _warnedStuck = new HashSet<long>();
+        private static readonly Dictionary<long, Vector3> _lastSeenPos = new Dictionary<long, Vector3>();
         private static float _timer;
 
         public static void OnUpdate(float dt)
@@ -67,6 +86,7 @@ namespace Wonderland.Subsystems.WorldGovernor
                     _lockedThisSession.Add(playerId);
                     _pendingPlayerWait.Remove(playerId);
                     _warnedStuck.Remove(playerId);
+                    _lastSeenPos.Remove(playerId);
                     continue;
                 }
 
@@ -99,39 +119,50 @@ namespace Wonderland.Subsystems.WorldGovernor
                 // The Valkyrie carries the player at 50m-500m altitude, 500m away.
                 // When skipping the intro, the client teleports/spawns directly at the StartTemple (pos + 2m).
 
-                bool arrivedAtSpawn = false;
+                // Movement since the last poll. The Valkyrie covers the intro flight far faster than a
+                // player on foot, so a character still being carried never reads as settled.
+                _lastSeenPos.TryGetValue(playerId, out Vector3 prevPos);
+                bool settled = prevPos != Vector3.zero && Vector3.Distance(pos, prevPos) < FlightSpeedThreshold;
+                _lastSeenPos[playerId] = pos;
 
-                // 1. Direct temple proximity: when a player skips the intro, Game.SpawnPlayer places them
-                // directly at StartTemple + Vector3.up * 2f.
-                if (ZoneSystem.instance != null && ZoneSystem.instance.GetLocationIcon("StartTemple", out Vector3 templePos))
+                float aboveGround = float.MaxValue;
+                if (WorldGenerator.instance != null)
                 {
-                    float horizontalDist = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(templePos.x, templePos.z));
-                    if (horizontalDist < 35f && Mathf.Abs(pos.y - templePos.y) < 15f)
-                    {
-                        arrivedAtSpawn = true;
-                    }
+                    aboveGround = pos.y - WorldGenerator.instance.GetHeight(pos.x, pos.z);
                 }
 
-                // 2. Ground elevation check: verifies the player is standing on terrain, altar stones, or shallow water
-                if (!arrivedAtSpawn && WorldGenerator.instance != null)
-                {
-                    float ground = WorldGenerator.instance.GetHeight(pos.x, pos.z);
-                    float diff = pos.y - ground;
-                    if (diff >= -4f && diff <= 8f)
-                    {
-                        arrivedAtSpawn = true;
-                    }
-                }
+                // GetHeight is base terrain noise and knows nothing about the stamped altar platform, so
+                // a player standing on the temple genuinely reads several metres "above ground". Temple
+                // proximity buys that extra vertical allowance and nothing more - it is corroboration,
+                // never a substitute for having landed. Granting on proximity alone is what handed a kit
+                // to a character still ~9m above the altar, mid-descent.
+                bool nearTemple = ZoneSystem.instance != null
+                    && ZoneSystem.instance.GetLocationIcon("StartTemple", out Vector3 templePos)
+                    && Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(templePos.x, templePos.z)) < 35f;
 
-                // If not yet arrived/landed, wait until touchdown or up to 60 seconds fallback timeout
-                if (!arrivedAtSpawn && waitTime < 60f)
+                float ceiling = nearTemple ? TempleVerticalAllowance : GroundTolerance;
+                bool landed = settled && aboveGround >= -4f && aboveGround <= ceiling;
+
+                // Never grant on a timeout, and never the instant a character appears. Granting after a
+                // fixed wait drops the kit and the boat wherever the player happens to be, which for
+                // anyone watching the intro is mid-air on the Valkyrie - one grant landed at
+                // (539, 190, 275) with its boat dumped 266m away in the first water visible from up
+                // there. Wait for a real touchdown however long it takes, then let the character settle
+                // for MinDwellSeconds so the drop lands at their feet rather than raining down behind
+                // them. The intro ends at the same spawn the skip route uses, so both routes converge.
+                if (!landed || waitTime < MinDwellSeconds)
                 {
+                    if (waitTime >= StuckWarnSeconds && _warnedStuck.Add(playerId))
+                    {
+                        WonderlandDebug.LogWarning($"[FirstSpawnGrant] '{character.Name}' (playerID {playerId}) has not reached the ground after {waitTime:F0}s (currently at {pos}, {aboveGround:F1}m above terrain) - the starter grant is still waiting for touchdown.");
+                    }
                     continue;
                 }
 
                 _lockedThisSession.Add(playerId);
                 _pendingPlayerWait.Remove(playerId);
                 _warnedStuck.Remove(playerId);
+                _lastSeenPos.Remove(playerId);
                 Grant(character, playerId);
             }
         }
@@ -271,6 +302,29 @@ namespace Wonderland.Subsystems.WorldGovernor
             return center;
         }
 
+        /// <summary>
+        /// Keeps starter boats from stacking. Every player spawning at the same altar asks the same
+        /// question and gets the same "nearest water" answer, so hulls piled onto one spot - four Karves
+        /// ended up within a metre of each other. Reads ZDOs rather than looking for a GameObject: a
+        /// dedicated server has no instance for a hull nobody happens to be standing next to.
+        /// </summary>
+        private static bool IsBoatSpotFree(Vector3 candidate)
+        {
+            if (ZNetScene.instance == null)
+            {
+                return true;
+            }
+            foreach (ZDO zdo in ZdoSpatialQuery.FindNear(candidate, BoatClearance))
+            {
+                GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
+                if (prefab != null && prefab.GetComponent<Ship>() != null)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         private static bool TryScanRings(
             Vector3 center,
             float startRadius,
@@ -315,7 +369,7 @@ namespace Wonderland.Subsystems.WorldGovernor
                         if ((waterLevel - hE) > 0.15f) openSides++;
                         if ((waterLevel - hW) > 0.15f) openSides++;
 
-                        if (openSides >= 3)
+                        if (openSides >= 3 && IsBoatSpotFree(new Vector3(x, waterLevel, z)))
                         {
                             // In this ring, prefer a spot with comfortable depth (~1.5m to ~2.5m)
                             if (candidate == Vector3.zero || Mathf.Abs(depth - 1.8f) < Mathf.Abs(bestDepth - 1.8f))
