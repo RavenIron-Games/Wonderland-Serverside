@@ -30,7 +30,11 @@ namespace Wonderland.Subsystems.WorldGovernor
         private const string KeyPrefix = "wonderland_starter_";
         private const float PollInterval = 2f;
 
+        private const float StuckWarnSeconds = 60f;
+
         private static readonly HashSet<long> _lockedThisSession = new HashSet<long>();
+        private static readonly Dictionary<long, float> _pendingPlayerWait = new Dictionary<long, float>();
+        private static readonly HashSet<long> _warnedStuck = new HashSet<long>();
         private static float _timer;
 
         public static void OnUpdate(float dt)
@@ -61,10 +65,73 @@ namespace Wonderland.Subsystems.WorldGovernor
                 if (ZoneSystem.instance.GetGlobalKey(KeyPrefix + playerId))
                 {
                     _lockedThisSession.Add(playerId);
+                    _pendingPlayerWait.Remove(playerId);
+                    _warnedStuck.Remove(playerId);
+                    continue;
+                }
+
+                Vector3 pos = character.Position;
+
+                // The wait accrues before any skip below. This used to sit after the origin check, so a
+                // character whose reported position never left the origin was skipped on every single
+                // poll with no timeout and never granted anything - unlike the "not arrived" branch
+                // further down, which always had its 60s escape.
+                if (!_pendingPlayerWait.TryGetValue(playerId, out float waitTime))
+                {
+                    waitTime = 0f;
+                }
+                waitTime += PollInterval;
+                _pendingPlayerWait[playerId] = waitTime;
+
+                if (pos.sqrMagnitude < 4f)
+                {
+                    // Granting here would drop the kit at the world origin, so this still has to wait -
+                    // but it must not do so silently and forever.
+                    if (waitTime >= StuckWarnSeconds && _warnedStuck.Add(playerId))
+                    {
+                        WonderlandDebug.LogWarning($"[FirstSpawnGrant] '{character.Name}' (playerID {playerId}) has reported a position at the world origin for {waitTime:F0}s - the starter grant cannot fire until a real position arrives.");
+                    }
+                    continue;
+                }
+
+                // Verify the player has completed the Valkyrie intro flight and touched down on the ground,
+                // or skipped the intro and spawned directly at the StartTemple.
+                // The Valkyrie carries the player at 50m-500m altitude, 500m away.
+                // When skipping the intro, the client teleports/spawns directly at the StartTemple (pos + 2m).
+
+                bool arrivedAtSpawn = false;
+
+                // 1. Direct temple proximity: when a player skips the intro, Game.SpawnPlayer places them
+                // directly at StartTemple + Vector3.up * 2f.
+                if (ZoneSystem.instance != null && ZoneSystem.instance.GetLocationIcon("StartTemple", out Vector3 templePos))
+                {
+                    float horizontalDist = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(templePos.x, templePos.z));
+                    if (horizontalDist < 35f && Mathf.Abs(pos.y - templePos.y) < 15f)
+                    {
+                        arrivedAtSpawn = true;
+                    }
+                }
+
+                // 2. Ground elevation check: verifies the player is standing on terrain, altar stones, or shallow water
+                if (!arrivedAtSpawn && WorldGenerator.instance != null)
+                {
+                    float ground = WorldGenerator.instance.GetHeight(pos.x, pos.z);
+                    float diff = pos.y - ground;
+                    if (diff >= -4f && diff <= 8f)
+                    {
+                        arrivedAtSpawn = true;
+                    }
+                }
+
+                // If not yet arrived/landed, wait until touchdown or up to 60 seconds fallback timeout
+                if (!arrivedAtSpawn && waitTime < 60f)
+                {
                     continue;
                 }
 
                 _lockedThisSession.Add(playerId);
+                _pendingPlayerWait.Remove(playerId);
+                _warnedStuck.Remove(playerId);
                 Grant(character, playerId);
             }
         }
@@ -75,10 +142,9 @@ namespace Wonderland.Subsystems.WorldGovernor
             string playerName = character.Name;
 
             GrantKit(pos);
-            GrantBoat(pos, playerName);
+            GrantBoat(pos, playerName, character);
 
             ZoneSystem.instance.SetGlobalKey(KeyPrefix + playerId);
-            WonderlandDebug.LogAlways($"[FirstSpawnGrant] granted starter kit + boat to '{playerName}' (playerID {playerId}) at {pos}.");
         }
 
         private static void GrantKit(Vector3 pos)
@@ -105,12 +171,18 @@ namespace Wonderland.Subsystems.WorldGovernor
                 ItemDrop.ItemData itemData = dropTemplate.m_itemData.Clone();
                 itemData.m_dropPrefab = prefab;
                 Vector2 offset = Random.insideUnitCircle * 0.6f;
-                ItemDrop.DropItem(itemData, amount, pos + new Vector3(offset.x, 0.3f, offset.y), Quaternion.identity);
+                float dropX = pos.x + offset.x;
+                float dropZ = pos.z + offset.y;
+                float groundY = WorldGenerator.instance != null
+                    ? WorldGenerator.instance.GetHeight(dropX, dropZ)
+                    : pos.y;
+                Vector3 dropPos = new Vector3(dropX, Mathf.Max(pos.y, groundY) + 0.35f, dropZ);
+                ItemDrop.DropItem(itemData, amount, dropPos, Quaternion.identity);
                 ItemLedger.RecordTransfer("FirstSpawnGrant", itemData.m_shared.m_name, amount);
             }
         }
 
-        private static void GrantBoat(Vector3 pos, string playerName)
+        private static void GrantBoat(Vector3 pos, string playerName, ConnectedCharacter character)
         {
             string hullPrefabName = WonderlandConfig.StarterBoatPrefab?.Value ?? "Karve";
             GameObject hullPrefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(hullPrefabName) : null;
@@ -120,12 +192,47 @@ namespace Wonderland.Subsystems.WorldGovernor
                 return;
             }
 
-            Vector3 waterPos = FindNearbyWater(pos, WonderlandConfig.StarterBoatSearchRadius?.Value ?? 60f);
-            GameObject boat = Object.Instantiate(hullPrefab, waterPos, Quaternion.identity);
+            float configuredRadius = WonderlandConfig.StarterBoatSearchRadius?.Value ?? 300f;
+            Vector3 waterPos = FindNearbyWater(pos, configuredRadius);
+
+            Vector3 seaward = waterPos - pos;
+            seaward.y = 0f;
+            Quaternion rot = seaward.sqrMagnitude > 0.01f ? Quaternion.LookRotation(seaward.normalized) : Quaternion.identity;
+
+            GameObject boat = Object.Instantiate(hullPrefab, waterPos, rot);
             ZNetView view = boat.GetComponent<ZNetView>();
             if (view != null && view.GetZDO() != null)
             {
                 view.GetZDO().Set("Wonderland_BoatOwner", playerName);
+            }
+
+            float dist = Vector3.Distance(pos, waterPos);
+            if (waterPos != pos)
+            {
+                WonderlandDebug.LogAlways($"[FirstSpawnGrant] granted starter kit to '{playerName}' (playerID {character.PlayerId}) at {pos}, and placed {hullPrefabName} in water at {waterPos} ({dist:F0}m away).");
+
+                // Vanilla client map pin discovery (pure server routed RPC - vanilla clients receive it cleanly)
+                if (WonderlandConfig.StarterBoatMapPin?.Value != false && character.Peer != null && character.Peer.m_uid != 0L)
+                {
+                    try
+                    {
+                        ZRoutedRpc.instance?.InvokeRoutedRPC(
+                            character.Peer.m_uid,
+                            "RPC_DiscoverLocationResponse",
+                            $"{playerName}'s {hullPrefabName}",
+                            (int)Minimap.PinType.Icon3,
+                            waterPos,
+                            false);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        WonderlandDebug.LogWarning($"[FirstSpawnGrant] could not send boat map pin to '{playerName}': {ex.Message}");
+                    }
+                }
+            }
+            else
+            {
+                WonderlandDebug.LogWarning($"[FirstSpawnGrant] granted starter kit to '{playerName}' at {pos}, but no water was found within search limits - placing {hullPrefabName} at their position instead.");
             }
         }
 
@@ -136,22 +243,98 @@ namespace Wonderland.Subsystems.WorldGovernor
                 return center;
             }
 
-            const int attempts = 24;
-            for (int i = 0; i < attempts; i++)
+            float waterLevel = ZoneSystem.instance != null ? ZoneSystem.instance.m_waterLevel : ZoneSystem.c_WaterLevel;
+            const float minDepth = 1.1f;          // Karve draft is ~0.6m; 1.1m allows floating freely without beaching
+            const float clearanceRadius = 2.0f;   // Check 2.0m cardinal clearance around candidate for open water
+            const float ringStep = 5f;            // 5m fine-grained step to discover immediate shorelines
+            const int bearings = 48;              // Every 7.5 degrees to catch nearby rivers, coves, and coastlines
+
+            // Primary search within configured search radius (minimum 60m)
+            float maxSearch = Mathf.Max(searchRadius, 60f);
+            if (TryScanRings(center, 10f, maxSearch, ringStep, bearings, waterLevel, minDepth, clearanceRadius, out Vector3 found))
             {
-                float angle = i * (360f / attempts) * Mathf.Deg2Rad;
-                float dist = searchRadius * ((i % 4) + 1) / 4f;
-                float x = center.x + Mathf.Cos(angle) * dist;
-                float z = center.z + Mathf.Sin(angle) * dist;
-                float height = WorldGenerator.instance.GetHeight(x, z);
-                if (height < ZoneSystem.c_WaterLevel - 1f)
+                return found;
+            }
+
+            // Fallback expanding search: expand up to 1200m so we never drop the boat on dry land
+            const float fallbackLimit = 1200f;
+            if (maxSearch < fallbackLimit)
+            {
+                WonderlandDebug.LogInfo($"[FirstSpawnGrant] no water found within configured radius {maxSearch:F0}m - expanding search up to {fallbackLimit:F0}m...");
+                if (TryScanRings(center, maxSearch + ringStep, fallbackLimit, ringStep * 1.5f, bearings, waterLevel, minDepth, clearanceRadius, out Vector3 fallbackFound))
                 {
-                    return new Vector3(x, ZoneSystem.c_WaterLevel, z);
+                    return fallbackFound;
                 }
             }
 
-            WonderlandDebug.LogWarning($"[FirstSpawnGrant] no water found within {searchRadius}m of the player - placing boat at their position instead.");
+            WonderlandDebug.LogWarning($"[FirstSpawnGrant] no suitable water found within {fallbackLimit:F0}m of the player - placing boat at their position instead.");
             return center;
+        }
+
+        private static bool TryScanRings(
+            Vector3 center,
+            float startRadius,
+            float endRadius,
+            float step,
+            int bearings,
+            float waterLevel,
+            float minDepth,
+            float clearanceRadius,
+            out Vector3 bestPos)
+        {
+            bestPos = center;
+
+            for (float r = startRadius; r <= endRadius; r += step)
+            {
+                Vector3 candidate = Vector3.zero;
+                float bestDepth = 0f;
+
+                for (int i = 0; i < bearings; i++)
+                {
+                    float angle = i * (360f / bearings) * Mathf.Deg2Rad;
+                    float x = center.x + Mathf.Cos(angle) * r;
+                    float z = center.z + Mathf.Sin(angle) * r;
+                    float height = WorldGenerator.instance.GetHeight(x, z);
+                    float depth = waterLevel - height;
+
+                    if (depth >= minDepth)
+                    {
+                        // Check surrounding clearance at cardinal offsets to ensure this is submerged water,
+                        // not straddling the dry beach or a rock wall. Three of the four is enough: a boat
+                        // sitting in a cove or against a shoreline has one dry side by definition, and
+                        // demanding all four is what pushed starter boats hundreds of metres out to sea
+                        // past perfectly usable water near spawn.
+                        float hN = WorldGenerator.instance.GetHeight(x, z + clearanceRadius);
+                        float hS = WorldGenerator.instance.GetHeight(x, z - clearanceRadius);
+                        float hE = WorldGenerator.instance.GetHeight(x + clearanceRadius, z);
+                        float hW = WorldGenerator.instance.GetHeight(x - clearanceRadius, z);
+
+                        int openSides = 0;
+                        if ((waterLevel - hN) > 0.15f) openSides++;
+                        if ((waterLevel - hS) > 0.15f) openSides++;
+                        if ((waterLevel - hE) > 0.15f) openSides++;
+                        if ((waterLevel - hW) > 0.15f) openSides++;
+
+                        if (openSides >= 3)
+                        {
+                            // In this ring, prefer a spot with comfortable depth (~1.5m to ~2.5m)
+                            if (candidate == Vector3.zero || Mathf.Abs(depth - 1.8f) < Mathf.Abs(bestDepth - 1.8f))
+                            {
+                                candidate = new Vector3(x, waterLevel, z);
+                                bestDepth = depth;
+                            }
+                        }
+                    }
+                }
+
+                if (candidate != Vector3.zero)
+                {
+                    bestPos = candidate;
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

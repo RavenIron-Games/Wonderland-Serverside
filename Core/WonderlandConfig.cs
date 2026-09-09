@@ -66,6 +66,7 @@ namespace Wonderland.Core
         public static ConfigEntry<string>? StarterKitItems;
         public static ConfigEntry<string>? StarterBoatPrefab;
         public static ConfigEntry<float>? StarterBoatSearchRadius;
+        public static ConfigEntry<bool>? StarterBoatMapPin;
 
         // Security
         public static ConfigEntry<bool>? VitalsGuardEnabled;
@@ -132,7 +133,8 @@ namespace Wonderland.Core
             StarterGrantEnabled = BindSynced(config, configSync, "10 - Starter Grant", "StarterGrantEnabled", true, "Grant a one-time starter kit and boat the first time a character is seen in this world. Recorded as a world global key per character (wonderland_starter_<playerID>), saved with the world.");
             StarterKitItems = BindSynced(config, configSync, "10 - Starter Grant", "StarterKitItems", "Wood:20,Stone:10,Flint:5", "Comma-separated PrefabName:Amount pairs spawned as ground items at spawn.");
             StarterBoatPrefab = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatPrefab", "Karve", "Vanilla hull prefab name granted (e.g. Raft, Karve, VikingShip).");
-            StarterBoatSearchRadius = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatSearchRadius", 60f, "Radius to search for water near spawn to place the boat in.", 10f, 300f);
+            StarterBoatSearchRadius = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatSearchRadius", 300f, "Radius to search for water near spawn to place the boat in.", 20f, 1500f);
+            StarterBoatMapPin = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatMapPin", true, "Send a vanilla map pin discovery to the player's map marking the starter boat.");
 
             VitalsGuardEnabled = BindSynced(config, configSync, "12 - Security", "VitalsGuardEnabled", true, "Flag max HP above a configured ceiling and implausible current stamina. Detect-only: neither can be corrected from the server - the owning client rewrites both every second and discards stale server writes while moving.");
             VitalsGuardInterval = BindSynced(config, configSync, "12 - Security", "VitalsGuardInterval", 5f, "Seconds between vitals checks.", 1f, 60f);

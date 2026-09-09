@@ -166,11 +166,15 @@ namespace Wonderland.Subsystems.Storage
                 }
             }
 
-            foreach (ItemDrop.ItemData item in overflowRemaining)
+            if (overflowRemaining.Count > 0)
             {
-                inventory.AddItem(item);
+                Vector3 pos = containerZdo.GetPosition();
+                foreach (ItemDrop.ItemData item in overflowRemaining)
+                {
+                    ItemCache.Store(pos, item, $"GridGrowth:{prefabName}");
+                }
                 WonderlandDebug.LogWarning(
-                    $"[GridGrowth] {item.m_stack}x {item.m_shared.m_name} in container '{prefabName}' at {containerZdo.GetPosition()} exceeds vanilla capacity and no sibling container had room. Left in place - place another container nearby to resolve.");
+                    $"[GridGrowth] {overflowRemaining.Count} stack(s) in container '{prefabName}' at {pos:F1} exceeded vanilla capacity and no sibling container had room. Safely moved to Wonderland ItemCache so items can never be lost.");
             }
 
             return true;

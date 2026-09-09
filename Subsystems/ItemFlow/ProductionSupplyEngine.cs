@@ -112,7 +112,7 @@ namespace Wonderland.Subsystems.ItemFlow
             if (TryConsumeOne(zdo.GetPosition(), template.m_fuelItem.gameObject.name))
             {
                 zdo.SetOwner(ZNet.GetUID());
-                zdo.Set(ZDOVars.s_fuel, fuel + 1f);
+                zdo.Set(ZDOVars.s_fuel, Mathf.Min((float)template.m_maxFuel, fuel + 1f));
             }
         }
 
@@ -141,7 +141,7 @@ namespace Wonderland.Subsystems.ItemFlow
                         zdo.SetOwner(ZNet.GetUID());
                         ownedForWrite = true;
                     }
-                    zdo.Set(ZDOVars.s_fuel, fuel + 1f);
+                    zdo.Set(ZDOVars.s_fuel, Mathf.Min((float)template.m_maxFuel, fuel + 1f));
                 }
             }
 

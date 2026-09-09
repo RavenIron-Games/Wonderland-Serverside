@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.2.3
+
+Audited every change in 0.2.1/0.2.2 against the 1.0.7 dedicated-server decompile before release. Neither
+of those versions ever shipped, and the audit found that several of their fixes did not work the way they
+were described - the entries below supersede them.
+
+### Fixed
+- **Chest vacuum item loss and endless re-adding.** Two separate defects. First, the partial-move path wrote a
+  reduced stack back to the ground item but never destroyed it, and nothing else removes a ZDO from the sector
+  index - so that item was returned by every future scan forever, and the chest kept growing from it. Second,
+  the same path double-counted: vanilla's `Inventory.RemoveItem` decrements the stack in place, so subtracting
+  the moved amount a second time silently destroyed the difference on every partial vacuum.
+  Vacuuming is now all-or-nothing: the container's real capacity is checked, the stack is added, the arrival is
+  **verified by counted quantity**, the container ZDO is committed, and only then is the ground copy destroyed.
+  If the container cannot take the whole stack the item is left on the ground untouched and the reason logged.
+- **Auto-harvest spawning items from the same bush repeatedly.** The server cannot make a bush "picked" stick:
+  writing `s_picked` never reaches an already-loaded `Pickable` (applying a ZDO fires no callback, so the live
+  component keeps its old `m_picked`, which is the only thing gating interaction and the berry visual), the
+  `RPC_SetPicked` broadcast only lands on peers that happen to have that bush instantiated at that instant, and
+  vanilla's own `ReleaseNearbyZDOS` hands ownership back to the nearby player within ~2 seconds. The sweep
+  therefore now keeps its own harvest ledger and refuses to re-harvest a bush until its real respawn time has
+  genuinely elapsed, instead of trusting a flag the server cannot hold.
+- **Starter kit never granted to some players.** The "position not initialised yet" check returned before the
+  wait timer accrued and had no timeout of its own, so any character reporting a position at the world origin
+  was skipped on every poll, forever, with nothing logged. The timer now accrues first, and a stuck character
+  is reported by name in the log instead of silently never being granted.
+- **Starter boat placed far out to sea.** The water search required all four cardinal probes around a candidate
+  to be open water, which rejects exactly the shorelines and coves near a typical spawn and pushed the boat
+  hundreds of metres out. Three of four is now enough - a boat against a shoreline has a dry side by definition.
+
+### Known limitations
+- The in-game chat commands added in 0.2.2 (`/cache`, `/cache claim`) do not currently work on a dedicated
+  server. Chat is relayed as per-recipient targeted packets, and a dedicated server only dispatches a routed
+  RPC locally when it is the target or the message is a broadcast, so the `Chat.RPC_ChatMessage` hook never
+  fires for player-typed text. The reply path is correct; the receive path needs to hook the routing layer.
+  Cached items still drain back into nearby chests automatically, which does not depend on chat.
+
+## 0.2.2
+
+### Added
+- **Persistent Server-Side Item Cache (`ItemCache`)**: Any container overflow from `GridGrowth` or `StackCapacity`
+  that exceeds vanilla slot or stack bounds and cannot fit into sibling chests is safely stored in `ItemCache`
+  rather than being left in the container where vanilla clients would silently discard it on open.
+  - Automatically drains cached items back into nearby chests as soon as slots become available (e.g. placing new chests or emptying existing ones).
+  - Persisted to disk across restarts using native `ZPackage` binary format (`Wonderland.Cache.<WorldName>.dat`).
+  - Native in-game chat commands for all connected vanilla players (Steam, Xbox, Crossplay): `/cache` displays summary, and `/cache claim` drops cached items at the player's feet.
+
+### Fixed
+- **Chest vacuum infinite item duplication**: Fixed an issue where the vacuum engine left ground items in the world
+  while continuously adding their values to nearby chests on every sweep. `ZDOMan.instance.DestroyZDO` is a silent
+  no-op unless the server owns the ZDO; the server now claims ownership before destruction and stack reduction,
+  and guards against duplicate processing in the same sweep batch.
+- **Auto-harvest bush duplication and visual berry desync**: Fixed an issue where swept bushes spawned item drops but
+  remained visually and logically unpicked on connected clients. The server now claims ownership and broadcasts vanilla
+  `RPC_SetPicked(true)` across the network, updating the visual berry meshes and interaction flags on connected clients,
+  and cleanly destroys ZDOs for non-respawning pickables (branches, stones, etc.).
+- **Starter kit delivery reliability**: Fixed an issue where only some players received the starter kit on first spawn.
+  The server now detects ground contact (waiting out the high-altitude Valkyrie intro flight) before spawning the kit,
+  and snaps dropped items to terrain/altar elevation so they never fall through the world or drop mid-air.
+- **Starter boat distance**: Sited the starter boat at the closest shoreline to the spawn altar by running the water
+  search from the player's landed ground coordinates with finer 5m ring steps, 1.1m depth, and 2.0m clearance check.
+
+## 0.2.1
+
+### Fixed
+- **Starter boat placed in water rather than at spawn.** Fixed an issue where starter boats were placed on dry land
+  directly at the player's spawn position because the old 24-point 60m search failed to reach water from inland sacrificial stones.
+  The water finder now performs an expanding concentric-ring scan using `WorldGenerator.instance.GetHeight` (pure noise math,
+  no colliders/zones needed) verifying water depth (≥1.5m) and open-water clearance, orients the boat seaward, and automatically
+  adds a vanilla map pin discovery on the player's map (`StarterBoatMapPin`).
+- Raised default `StarterBoatSearchRadius` from 60m to 300m (with slider ceiling expanded to 1,500m) and added expanding
+  search fallback up to 1,200m so the boat is never beached on land even on large starter islands.
+
 ## 0.2.0
 
 Rebuilt for **Valheim 1.0** (1.0.7, dedicated-server build 25185644, network version 39) and, for the

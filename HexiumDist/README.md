@@ -6,7 +6,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Crossplay](https://img.shields.io/badge/Crossplay-PlayFab%2FXbox_Ready-purple.svg)]()
-[![Version](https://img.shields.io/badge/Version-0.2.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.2.3-lightgrey.svg)]()
 [![Valheim 1.0](https://img.shields.io/badge/Valheim-1.0.7_Server-green.svg)]()
 
 *No client install, ever. The server does the work. Built and live-tested on Valheim 1.0.*
@@ -54,8 +54,11 @@ Fireplaces, hearths, torches, smelters, and kilns stay fed from linked container
 ### 🗂️ Background Sort
 A slow, low-frequency pass quietly merges partial stacks of the same item across a base's containers. Consolidation only — a stack that's already whole is never touched, and nothing gets relocated while you're actively looking at it.
 
-### 📦 Storage Capacity
-**Off by default, and honestly labeled.** The mod carries a stack-size multiplier and real grid-row growth, both applied server-side — but a vanilla client (the only kind that ever connects to a server-only mod) clamps every stack to its own vanilla maximum and discards anything stored beyond its own grid the moment it loads a chest. The **overflow guard** exists to make sure that never costs anyone an item: it rides the vacuum sweep and splits or relocates anything beyond true vanilla bounds back to a legal position before a client can load it. On a server-only install that makes the two levers self-cancelling — players never see a larger stack or a bigger grid — so they ship disabled. The guard itself stays on regardless, as a safety net for any container that somehow ends up over vanilla bounds.
+### 📦 Storage Capacity & Item Cache
+**Off by default, and honestly labeled.** The mod carries a stack-size multiplier and real grid-row growth, both applied server-side — but a vanilla client (the only kind that ever connects to a server-only mod) clamps every stack to its own vanilla maximum and discards anything stored beyond its own grid the moment it loads a chest. The **overflow guard** and persistent **Item Cache** ensure that never costs anyone an item:
+- **Never-Lost Overflow Guard**: Any items in containers exceeding vanilla bounds are safely routed into nearby sibling chests, or into the persistent server-side `ItemCache` (`Wonderland.Cache.<WorldName>.dat`) if all nearby chests are full.
+- **Automatic Drain**: As soon as new chests are placed or space opens up, cached items automatically flow right back into storage.
+- **In-Game Chat Commands**: Any connected player on any platform can type `/cache` in chat to see cached items, or `/cache claim` to retrieve cached items directly to the ground at their feet.
 
 ### ⚔️ Raids & Night Spawns
 Block configured high-tier raid events from ever triggering in configured biomes (defaults: Meadows, BlackForest) — genuinely server-authoritative, not a guess. A companion system destroys hostile night-spawn creatures matching a configured biome/tier list the instant the server registers them, so a Meadows base stays a Meadows base no matter how long it's been standing.
@@ -69,7 +72,7 @@ Raises or lowers vanilla's hardcoded 10-player connection limit. Connection admi
 A periodic correction pass resets tracked building pieces back to full health, rather than trying to intercept the (client-owned) decay tick directly. The effect is the same as disabling decay — the mechanism is just a standing correction instead of a patch that could never reliably fire on a real dedicated server.
 
 ### 🎁 Starter Grant
-New characters get a one-time starter kit and a labeled boat, automatically, the first time they're seen in the world — configurable kit contents, hull type, and search radius for a nearby launch spot. The record is a world global key per character (`wonderland_starter_<playerID>`), saved inside the world file itself, so it only ever happens once per world — across reconnects, restarts, and backup restores alike.
+New characters get a one-time starter kit and a labeled boat, automatically, the first time they're seen in the world — configurable kit contents, hull type, boat placement search radius, and an automatic vanilla map pin discovery. The boat is sited in open water with proper clearance, oriented seaward, rather than placed on dry land. The record is a world global key per character (`wonderland_starter_<playerID>`), saved inside the world file itself, so it only ever happens once per world — across reconnects, restarts, and backup restores alike.
 
 ### 🛡️ Security & Anti-Cheat
 Split honestly into what the server can actually do something about:

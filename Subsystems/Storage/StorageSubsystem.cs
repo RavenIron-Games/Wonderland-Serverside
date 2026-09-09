@@ -12,6 +12,8 @@ namespace Wonderland.Subsystems.Storage
 
         public void Initialize(ConfigFile config, ConfigSync configSync, Harmony harmony)
         {
+            SubsystemRegistry.SafePatch(harmony, typeof(ChatCommands));
+
             // Re-apply whenever an admin changes the multiplier at runtime (ServerSync pushes the new
             // value and fires SettingChanged same as a local edit) - StackCapacity.Apply is idempotent
             // so this is always safe to re-run.
@@ -28,6 +30,7 @@ namespace Wonderland.Subsystems.Storage
         public void OnWorldReady()
         {
             StackCapacity.Apply();
+            ItemCache.Initialize();
         }
 
         public void OnUpdate()
@@ -36,6 +39,7 @@ namespace Wonderland.Subsystems.Storage
 
         public void Shutdown()
         {
+            ItemCache.Save();
         }
     }
 }

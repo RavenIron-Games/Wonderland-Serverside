@@ -34,6 +34,18 @@ namespace Wonderland.Core.Compat
     /// itself compares type NAMES rather than using typeof() on anything that might be missing: a
     /// typeof(SimulationDistance) or typeof(Vector2s) inside Detect() would be exactly the binding the
     /// rule forbids on an older build.
+    ///
+    /// A second rule, learned live on VanillaBean (2026-09-09) when the Valheim10Compatibility patcher
+    /// took Wonderland down: a patcher that bridges old mods onto 1.0 can inject its own same-name,
+    /// same-parameter overload directly onto a native type (a legacy-return-type GetZone(Vector3) beside
+    /// the native one, so old reflection-based callers still resolve it by that signature). Type.GetMethod
+    /// (name, bindingFlags, binder, types, modifiers) - the single-result overload - throws
+    /// AmbiguousMatchException the instant two methods share a name and parameter list, even though only
+    /// one is real; it doesn't matter that the binder was given exact parameter types, because those two
+    /// injected/native methods differ only in return type, which GetMethod does not use to disambiguate.
+    /// So Detect() never calls that overload: every lookup goes through GetMethods() and is filtered and
+    /// paired by hand, exactly like FindSectorObjects already was, and Release is tried against every
+    /// GetZone candidate before Legacy so a shimmed build still prefers the native path.
     /// </summary>
     public static class GameShape
     {
@@ -65,36 +77,55 @@ namespace Wonderland.Core.Compat
             }
             _probed = true;
 
-            MethodInfo getZone = typeof(ZoneSystem).GetMethod("GetZone", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(Vector3) }, null);
-            if (getZone == null)
+            try
             {
-                WonderlandDebug.LogWarning("[GameShape] ZoneSystem.GetZone(Vector3) not found at all - every radius query in this mod will return nothing on this build until it is re-verified against the decompile.");
-                return;
+                MethodInfo[] getZoneCandidates = typeof(ZoneSystem)
+                    .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .Where(m => m.Name == "GetZone" && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == typeof(Vector3))
+                    .ToArray();
+
+                if (getZoneCandidates.Length == 0)
+                {
+                    WonderlandDebug.LogWarning("[GameShape] ZoneSystem.GetZone(Vector3) not found at all - every radius query in this mod will return nothing on this build until it is re-verified against the decompile.");
+                    return;
+                }
+
+                MethodInfo[] findSectorCandidates = typeof(ZDOMan)
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(m => m.Name == "FindSectorObjects")
+                    .ToArray();
+
+                foreach (MethodInfo getZone in getZoneCandidates)
+                {
+                    Type sectorType = getZone.ReturnType;
+                    if (findSectorCandidates.Any(m => IsReleaseShape(m, sectorType)))
+                    {
+                        Detected = Build.Release10_SimulationDistance;
+                        WonderlandDebug.LogAlways($"[GameShape] detected the Valheim 1.0.7+ sector API ({sectorType.Name} sectors, SimulationDistance) - using the native path.");
+                        return;
+                    }
+                }
+
+                foreach (MethodInfo getZone in getZoneCandidates)
+                {
+                    Type sectorType = getZone.ReturnType;
+                    MethodInfo legacyFind = findSectorCandidates.FirstOrDefault(m => IsLegacyShape(m, sectorType));
+                    if (legacyFind != null)
+                    {
+                        _legacyGetZone = getZone;
+                        _legacyFindSectorObjects = legacyFind;
+                        Detected = Build.Legacy_FiveArgSectors;
+                        WonderlandDebug.LogAlways($"[GameShape] detected a pre-1.0 sector API ({sectorType.Name} sectors, five-arg FindSectorObjects) - bridging via reflection. This mod is built and tested against 1.0.7; treat this path as best-effort.");
+                        return;
+                    }
+                }
+
+                WonderlandDebug.LogWarning($"[GameShape] no matching GetZone/FindSectorObjects pair found on this build ({getZoneCandidates.Length} GetZone overload(s), {findSectorCandidates.Length} FindSectorObjects overload(s)) - every radius query in this mod will return nothing until Core/Compat/GameShape.cs is re-verified against this build's decompile.");
             }
-            Type sectorType = getZone.ReturnType;
-
-            MethodInfo[] candidates = typeof(ZDOMan)
-                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(m => m.Name == "FindSectorObjects")
-                .ToArray();
-
-            if (candidates.Any(m => IsReleaseShape(m, sectorType)))
+            catch (Exception ex)
             {
-                Detected = Build.Release10_SimulationDistance;
-                WonderlandDebug.LogAlways($"[GameShape] detected the Valheim 1.0.7+ sector API ({sectorType.Name} sectors, SimulationDistance) - using the native path.");
-                return;
+                WonderlandDebug.LogWarning($"[GameShape] detection threw unexpectedly ({ex.GetType().Name}: {ex.Message}) - every radius query in this mod will return nothing on this build. This should never happen; please report it.");
             }
-
-            _legacyFindSectorObjects = candidates.FirstOrDefault(m => IsLegacyShape(m, sectorType));
-            if (_legacyFindSectorObjects != null)
-            {
-                _legacyGetZone = getZone;
-                Detected = Build.Legacy_FiveArgSectors;
-                WonderlandDebug.LogAlways($"[GameShape] detected a pre-1.0 sector API ({sectorType.Name} sectors, five-arg FindSectorObjects) - bridging via reflection. This mod is built and tested against 1.0.7; treat this path as best-effort.");
-                return;
-            }
-
-            WonderlandDebug.LogWarning($"[GameShape] ZDOMan.FindSectorObjects has an unrecognised shape on this build ({candidates.Length} overload(s), sectors are {sectorType.Name}) - every radius query in this mod will return nothing until Core/Compat/GameShape.cs is re-verified against this build's decompile.");
         }
 
         private static bool IsReleaseShape(MethodInfo m, Type sectorType)

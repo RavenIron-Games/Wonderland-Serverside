@@ -27,7 +27,10 @@ namespace Wonderland.Subsystems.ItemFlow
         private static ZdoSpatialQuery.PrefabSetScanner _containerScanner;
         private static float _vacuumTimer;
         private static readonly List<ZDO> _scanBuffer = new List<ZDO>();
+        private static readonly HashSet<ZDOID> _destroyedThisBatch = new HashSet<ZDOID>();
+        private static readonly List<ZDO> _pendingGroundDestroy = new List<ZDO>();
         private static readonly Dictionary<ZDOID, bool> _lastPicked = new Dictionary<ZDOID, bool>();
+        private static readonly Dictionary<ZDOID, long> _harvestedAt = new Dictionary<ZDOID, long>();
         private const int MaxTrackedPickables = 50000;
 
         public static void Initialize()
@@ -61,6 +64,7 @@ namespace Wonderland.Subsystems.ItemFlow
         private static void ProcessVacuumBatch()
         {
             _scanBuffer.Clear();
+            _destroyedThisBatch.Clear();
             int budget = Mathf.Max(1, WonderlandConfig.VacuumBatchSize?.Value ?? 25);
             for (int i = 0; i < budget; i++)
             {
@@ -114,6 +118,9 @@ namespace Wonderland.Subsystems.ItemFlow
                 }
             }
 
+            // Try draining any previously overflowed items from ItemCache into this container
+            changed |= ItemCache.TryDrainInto(containerZdo, inventory);
+
             if (inventory.NrOfItems() > 0)
             {
                 changed |= VacuumGroundItemsInto(containerZdo, inventory, prefabHash);
@@ -123,6 +130,27 @@ namespace Wonderland.Subsystems.ItemFlow
             {
                 ZdoInventoryIO.Save(containerZdo, inventory);
             }
+
+            FlushPendingGroundDestroy();
+        }
+
+        /// <summary>
+        /// Destroys the ground items only after the container ZDO carrying them has been committed,
+        /// so there is never a window where neither side holds the stack. ZDOMan.DestroyZDO silently
+        /// does nothing unless the caller owns the ZDO, hence the ownership claim first.
+        /// </summary>
+        private static void FlushPendingGroundDestroy()
+        {
+            foreach (ZDO groundZdo in _pendingGroundDestroy)
+            {
+                if (!groundZdo.IsValid())
+                {
+                    continue;
+                }
+                groundZdo.SetOwner(ZDOMan.GetSessionID());
+                ZDOMan.instance.DestroyZDO(groundZdo);
+            }
+            _pendingGroundDestroy.Clear();
         }
 
         /// <summary>Match-required: only tops up an item type the container already holds at least one of.</summary>
@@ -134,7 +162,7 @@ namespace Wonderland.Subsystems.ItemFlow
 
             foreach (ZDO groundZdo in nearby)
             {
-                if (!groundZdo.IsValid() || groundZdo.GetPrefab() == containerPrefabHash)
+                if (!groundZdo.IsValid() || groundZdo.GetPrefab() == containerPrefabHash || _destroyedThisBatch.Contains(groundZdo.m_uid))
                 {
                     continue;
                 }
@@ -174,37 +202,52 @@ namespace Wonderland.Subsystems.ItemFlow
                     continue; // match-required
                 }
 
-                int moved = ZdoInventoryIO.MoveMatchingItem(TempGroundInventory(groundItem), inventory, groundItem, groundItem.m_stack, VacuumTag);
-                if (moved <= 0)
+                int stackOnGround = groundItem.m_stack;
+                if (stackOnGround <= 0)
                 {
                     continue;
                 }
 
+                // All-or-nothing. The old partial path both wrote a reduced stack back to a ZDO whose
+                // owning client rewrites it, and double-counted the move: Inventory.RemoveItem already
+                // decrements m_stack in place, so subtracting the moved amount a second time deleted
+                // the difference outright.
+                if (!inventory.CanAddItem(groundItem, stackOnGround))
+                {
+                    ItemLedger.RecordRejection(VacuumTag, groundItem.m_shared.m_name, stackOnGround, "container full - left on the ground");
+                    continue;
+                }
+
+                string itemName = groundItem.m_shared.m_name;
+                int before = inventory.CountItems(itemName);
+                ItemDrop.ItemData toStore = groundItem.Clone();
+                toStore.m_stack = stackOnGround;
+                bool added = inventory.AddItem(toStore);
+
+                // Verify the whole stack actually landed before queueing the ground copy for
+                // destruction: until the container ZDO is committed, that ground item is the only
+                // copy of these items that exists. AddItem can top up pre-existing stacks and only
+                // then fail to place the remainder, so trust the count, never the return value, and
+                // roll back by quantity - removing the ItemData we passed in would leave those
+                // top-ups behind and duplicate them.
+                int landed = inventory.CountItems(itemName) - before;
+                if (!added || landed != stackOnGround)
+                {
+                    if (landed > 0)
+                    {
+                        inventory.RemoveItem(itemName, landed);
+                    }
+                    ItemLedger.RecordRejection(VacuumTag, itemName, stackOnGround, "container could not take the whole stack - left on the ground");
+                    continue;
+                }
+
                 changed = true;
-                if (moved >= groundItem.m_stack)
-                {
-                    ZDOMan.instance.DestroyZDO(groundZdo);
-                }
-                else
-                {
-                    groundItem.m_stack -= moved;
-                    ItemDrop.SaveToZDO(groundItem, groundZdo);
-                }
+                _destroyedThisBatch.Add(groundZdo.m_uid);
+                _pendingGroundDestroy.Add(groundZdo);
+                ItemLedger.RecordTransfer(VacuumTag, groundItem.m_shared.m_name, stackOnGround);
             }
 
             return changed;
-        }
-
-        /// <summary>
-        /// ZdoInventoryIO.MoveMatchingItem wants a source Inventory to remove from, but a ground item
-        /// lives on its own ZDO, not inside one. A single-item scratch inventory gives the same
-        /// RemoveItem contract without teaching the shared helper a second source shape.
-        /// </summary>
-        private static Inventory TempGroundInventory(ItemDrop.ItemData item)
-        {
-            var scratch = new Inventory("wonderland_ground_scratch", null, 1, 1);
-            scratch.AddItem(item);
-            return scratch;
         }
 
         private static bool IsContainerExcluded(string prefabName) => MatchesList(WonderlandConfig.VacuumExcludedContainers?.Value, prefabName);
@@ -238,6 +281,26 @@ namespace Wonderland.Subsystems.ItemFlow
                 _lastPicked.Clear();
             }
 
+            if (_harvestedAt.Count > MaxTrackedPickables && ZNet.instance != null)
+            {
+                // Aged out rather than cleared outright: dropping a still-fresh entry would reopen the
+                // very re-harvest window this ledger exists to close. A day of game time is far past
+                // any vanilla respawn, so anything older is genuinely finished with.
+                long cutoff = ZNet.instance.GetTime().AddDays(-1.0).Ticks;
+                var stale = new List<ZDOID>();
+                foreach (KeyValuePair<ZDOID, long> entry in _harvestedAt)
+                {
+                    if (entry.Value < cutoff)
+                    {
+                        stale.Add(entry.Key);
+                    }
+                }
+                foreach (ZDOID id in stale)
+                {
+                    _harvestedAt.Remove(id);
+                }
+            }
+
             // Anchored to each connected player's character ZDO - never Player.GetAllPlayers(), which is
             // the local instance list and always empty on a dedicated server (see ConnectedCharacters).
             foreach (ConnectedCharacter character in ConnectedCharacters.All())
@@ -266,6 +329,7 @@ namespace Wonderland.Subsystems.ItemFlow
         private static void SweepBonusHarvest(ZDO triggerZdo, GameObject triggerPrefab, float radius)
         {
             int triggerPrefabHash = triggerZdo.GetPrefab();
+            Pickable template = triggerPrefab.GetComponent<Pickable>();
             List<ZDO> nearby = ZdoSpatialQuery.FindNear(triggerZdo.GetPosition(), radius);
             foreach (ZDO zdo in nearby)
             {
@@ -273,12 +337,41 @@ namespace Wonderland.Subsystems.ItemFlow
                 {
                     continue;
                 }
-                if (zdo.GetBool(ZDOVars.s_picked))
+                if (zdo.GetBool(ZDOVars.s_picked) || WasHarvestedRecently(zdo.m_uid, template))
                 {
                     continue;
                 }
                 HarvestPickable(zdo, triggerPrefab);
             }
+        }
+
+        /// <summary>
+        /// s_picked alone is not a safe "already harvested" record, so this ledger is the one that
+        /// actually stops a bush being swept twice. The server cannot make a pick stick: writing
+        /// s_picked never reaches an already-loaded Pickable (applying a ZDO fires no callback, so the
+        /// live component's m_picked - the only thing gating Interact and the visual - keeps its old
+        /// value), the RPC only lands on peers that happen to have the bush instantiated at that
+        /// instant, and vanilla's ReleaseNearbyZDOS hands ownership back to the nearby player within
+        /// ~2s, after which their client can restore the flag. Without this ledger the sweep re-harvests
+        /// the same bush every time the flag flips back, spawning items forever.
+        /// </summary>
+        private static bool WasHarvestedRecently(ZDOID uid, Pickable template)
+        {
+            if (!_harvestedAt.TryGetValue(uid, out long ticks))
+            {
+                return false;
+            }
+            float respawnMinutes = template != null ? template.m_respawnTimeMinutes : 0f;
+            if (respawnMinutes <= 0f || ZNet.instance == null)
+            {
+                return true; // never respawns (or no clock to judge with) - never sweep it again
+            }
+            if ((ZNet.instance.GetTime() - new System.DateTime(ticks)).TotalMinutes >= respawnMinutes)
+            {
+                _harvestedAt.Remove(uid);
+                return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -320,12 +413,29 @@ namespace Wonderland.Subsystems.ItemFlow
             itemData.m_dropPrefab = pickableTemplate.m_itemPrefab;
             ItemDrop.DropItem(itemData, amount, zdo.GetPosition() + Vector3.up * 0.3f, Quaternion.identity);
 
-            zdo.Set(ZDOVars.s_picked, true);
+            // Claim ownership on server and broadcast vanilla RPC_SetPicked so all connected clients
+            // immediately update visual berries/geometry and set their local m_picked = true.
+            zdo.SetOwner(ZDOMan.GetSessionID());
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZNetView.Everybody, zdo.m_uid, "RPC_SetPicked", true);
+
+            if (pickableTemplate.m_respawnTimeMinutes > 0f || pickableTemplate.m_hideWhenPicked != null)
+            {
+                zdo.Set(ZDOVars.s_picked, true);
+                if (ZNet.instance != null)
+                {
+                    zdo.Set(ZDOVars.s_pickedTime, ZNet.instance.GetTime().Ticks);
+                }
+            }
+            else
+            {
+                ZDOMan.instance.DestroyZDO(zdo);
+            }
+
+            _lastPicked[zdo.m_uid] = true;
             if (ZNet.instance != null)
             {
-                zdo.Set(ZDOVars.s_pickedTime, ZNet.instance.GetTime().Ticks);
+                _harvestedAt[zdo.m_uid] = ZNet.instance.GetTime().Ticks;
             }
-            _lastPicked[zdo.m_uid] = true;
 
             ItemLedger.RecordTransfer(HarvestTag, itemData.m_shared.m_name, amount);
         }
