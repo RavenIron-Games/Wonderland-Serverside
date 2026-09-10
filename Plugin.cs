@@ -15,7 +15,7 @@ namespace Wonderland
     {
         public const string ModGUID = "wubarrk.wonderland";
         public const string ModName = "Wonderland";
-        public const string ModVersion = "0.2.7";
+        public const string ModVersion = "0.3.0";
 
         public static WonderlandPlugin Instance { get; private set; } = null!;
         public static ConfigSync ConfigSync { get; private set; } = null!;

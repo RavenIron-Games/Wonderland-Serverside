@@ -191,7 +191,7 @@ namespace Wonderland.Subsystems.ItemFlow
                     continue;
                 }
 
-                (int width, int height) = GridGrowth.GetVanillaSize(prefab.name, template);
+                (int width, int height) = ContainerRows.GetGridSize(prefab, template);
                 Inventory inventory = ZdoInventoryIO.Load(containerZdo, width, height);
                 if (inventory == null)
                 {

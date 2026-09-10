@@ -6,7 +6,6 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Crossplay](https://img.shields.io/badge/Crossplay-PlayFab%2FXbox_Ready-purple.svg)]()
-[![Version](https://img.shields.io/badge/Version-0.2.7-lightgrey.svg)]()
 [![Valheim 1.0](https://img.shields.io/badge/Valheim-1.0.7_Server-green.svg)]()
 
 *No client install, ever. The server does the work. Built and live-tested on Valheim 1.0.*
@@ -28,6 +27,7 @@ experience.
   - [🧲 Vacuum & Auto-Harvest](#-vacuum--auto-harvest)
   - [🔥 Production Supply](#-production-supply)
   - [🗂️ Background Sort](#️-background-sort)
+  - [📐 Container Rows](#-container-rows)
   - [📦 Item Cache & Overflow Guard](#-item-cache--overflow-guard)
   - [⚔️ Raids & Night Spawns](#️-raids--night-spawns)
   - [👥 Player Cap](#-player-cap)
@@ -54,9 +54,12 @@ Fireplaces, hearths, torches, smelters, and kilns stay fed from linked container
 ### 🗂️ Background Sort
 A slow, low-frequency pass quietly merges partial stacks of the same item across a base's containers. Consolidation only — a stack that's already whole is never touched, and nothing gets relocated while you're actively looking at it.
 
+### 📐 Container Rows
+Every player-built container gets more rows — doubled by default, so a wood chest goes from 2 rows to 4 and a reinforced chest from 4 to 8 — on completely vanilla clients, with nothing installed on their side. The multiplier is configurable, and total rows are capped at 32. The mechanism is vanilla's own: a 1.0 client accepts item rows beyond a chest's prefab grid when it loads the chest from the server, resizes the grid to fit them, and the chest panel scrolls. All the server does is keep one stack parked in the last row so the client keeps drawing it — a pure position move that can never add, remove or resize a stack — and since vanilla already places materials bottom-first, that anchor mostly takes care of itself. The vacuum, production supply and sort all see and use the grown rows. Width and stack sizes are **not** part of this: a vanilla client refuses extra columns and clamps every stack to its own maximum on load, so those stay vanilla (see below). Tombstones, treasure and dungeon chests, cargo crates and every other world-spawned container keep their vanilla size; add any player-built prefab you want left alone to the exclusion list.
+
 ### 📦 Item Cache & Overflow Guard
-Wonderland does **not** boost stack sizes or grow container grids. Both were tried and removed in 0.2.6: a vanilla client — the only kind that ever connects to a server-only mod — clamps every stack to its own vanilla maximum and discards anything stored beyond its own grid the moment it loads a chest, so the server-side boost was invisible in play and bought nothing. What remains is the safety net, which still matters because containers grown by an earlier version are still out there in saved worlds:
-- **Never-Lost Overflow Guard**: Any items in containers exceeding vanilla bounds are safely routed into nearby sibling chests, or into the persistent server-side `ItemCache` (`Wonderland.Cache.<WorldName>.dat`) if all nearby chests are full.
+Wonderland does **not** boost stack sizes: a vanilla client — the only kind that ever connects to a server-only mod — clamps every stack to its own vanilla maximum the moment it loads a chest, so a server-side boost is invisible in play and only puts the excess at risk. (Extra *rows* are different — see Container Rows above.) The guard is the safety net that keeps anything a client would clamp or refuse from ever being lost:
+- **Never-Lost Overflow Guard**: Any items a chest cannot actually hold — a column past vanilla width, a row past the chest's grown height, a stack above vanilla max — are safely routed into nearby sibling chests, or into the persistent server-side `ItemCache` (`Wonderland.Cache.<WorldName>.dat`) if all nearby chests are full.
 - **Automatic Drain**: As soon as new chests are placed or space opens up, cached items automatically flow right back into storage.
 
 > ⚠️ The `/cache` and `/cache claim` chat commands do not currently work on a dedicated server — chat is relayed as per-recipient targeted packets, so the server never sees the text. Automatic draining is unaffected.
@@ -77,7 +80,7 @@ New characters get a one-time starter kit and a labeled boat, automatically, the
 
 ### 🛡️ Security & Anti-Cheat
 Split honestly into what the server can actually do something about:
-- **Enforceable** — a periodic **item-integrity sweep** checks every tracked container against real item definitions and Wonderland's own configured stack/grid ceilings, flagging (or optionally removing) fabricated items. Containers only: a player's own bag is never networked to the server, so there is nothing there to check.
+- **Enforceable** — a periodic **item-integrity sweep** checks every tracked container against real item definitions and vanilla stack ceilings, flagging (or optionally removing) fabricated items. Containers only: a player's own bag is never networked to the server, so there is nothing there to check.
 - **Detect-only** — max HP above a configured ceiling, implausible current stamina, implausible movement speed, and a persistent gap between reported position and expected terrain height (likely flight/noclip) are all logged as signals for an admin to review, never auto-corrected. Expect some false positives by design: a portal trip reads as impossible speed, and a tall build reads as flight — they're signals, not verdicts. Max HP in particular *cannot* be corrected from the server — the owning client rewrites it from food every second and discards stale server writes while moving — so it's reported honestly as a signal rather than promised as a clamp. Rubber-banding a player back based on a guess would be worse than the problem.
 - **Structural blind spots, named honestly** — max stamina, carry weight, skill levels, save-file edits, and ESP-style rendering cheats never reach the server at all, on any Valheim build; no amount of server-side logic changes that. Combat hits are in the same bucket: a damage RPC goes to the victim's own client and the server only relays it, which is why there is no damage-plausibility check here.
 
@@ -97,6 +100,7 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 | `2 - Vacuum & Auto-Harvest` | Enable, interval, batch size, radius, and exclusion lists for the vacuum/auto-harvest sweep. |
 | `3 - Production Supply` | Enable, interval, batch size, range, and reserve floor for fuel/process-material auto-supply. |
 | `4 - Sort` | Enable, interval, and batch size for background stack consolidation. |
+| `5 - Container Rows` | Enable, row multiplier, sweep interval, batch size, and exclusion list for server-side chest row growth on vanilla clients. |
 | `6 - Raids` | Enable, blocked biomes, and blocked raid-event name list. |
 | `7 - Night Spawns` | Enable, blocked biomes, and blocked creature prefab list. |
 | `8 - Player Cap` | Maximum concurrent connected players (default 10, vanilla's own limit). |
@@ -109,7 +113,7 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 | :--- | :--- | :--- |
 | `VerboseLogging` | `1 - General` | Verbose diagnostic logging. Security findings always log regardless of this setting. |
 
-**Upgrading?** Old settings carry over automatically on first launch wherever the concept still exists (from 0.1.0: the Vitality check interval moves to the Security section; from pre-0.1.0: stack multiplier, vacuum enable/radius/interval, auto-fuel→production-supply, raid-block). Anything tied to a removed feature is logged once as a summary and dropped.
+**Upgrading from an older release?** Settings carry over automatically on first launch wherever the concept still exists. Anything tied to a removed feature is logged once as a summary and dropped. What changed between releases lives in the changelog, not here.
 
 ---
 

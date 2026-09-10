@@ -97,7 +97,7 @@ namespace Wonderland.Subsystems.ItemFlow
                 return;
             }
 
-            (int width, int height) = GridGrowth.GetVanillaSize(prefabName, template);
+            (int width, int height) = ContainerRows.GetGridSize(prefab, template);
             Inventory inventory = ZdoInventoryIO.Load(containerZdo, width, height);
             if (inventory == null)
             {
@@ -109,7 +109,7 @@ namespace Wonderland.Subsystems.ItemFlow
             // Overflow guard rides this same pass - every container Wonderland already has open gets
             // checked, on a short regular interval, well before any real client could load it.
             float linkRadius = WonderlandConfig.ContainerLinkRadius?.Value ?? 10f;
-            if (GridGrowth.EnforceOverflow(containerZdo, inventory, prefabName, template, linkRadius, out bool siblingChanged, out ZDO siblingZdo))
+            if (GridGrowth.EnforceOverflow(containerZdo, inventory, prefab, template, linkRadius, out bool siblingChanged, out ZDO siblingZdo))
             {
                 changed = true;
                 if (siblingChanged && siblingZdo != null)
@@ -124,6 +124,12 @@ namespace Wonderland.Subsystems.ItemFlow
             if (inventory.NrOfItems() > 0)
             {
                 changed |= VacuumGroundItemsInto(containerZdo, inventory, prefabHash);
+            }
+
+            if (changed && ContainerRows.IsEnabled && ContainerRows.IsEligible(prefab, template))
+            {
+                // Already committing this chest - make the same write leave its grown rows visible.
+                ContainerRows.EnsureAnchor(inventory, GridGrowth.GetVanillaSize(prefabName, template).height, height, out _);
             }
 
             if (changed)

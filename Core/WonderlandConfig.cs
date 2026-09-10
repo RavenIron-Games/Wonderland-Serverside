@@ -32,6 +32,13 @@ namespace Wonderland.Core
         public static ConfigEntry<float>? SortInterval;
         public static ConfigEntry<int>? SortBatchSize;
 
+        // 5 - Container Rows
+        public static ConfigEntry<bool>? ContainerRowsEnabled;
+        public static ConfigEntry<float>? ContainerRowMultiplier;
+        public static ConfigEntry<float>? ContainerRowsInterval;
+        public static ConfigEntry<int>? ContainerRowsBatchSize;
+        public static ConfigEntry<string>? ContainerRowsExcludedContainers;
+
         // Storage - stack size
 
         // Storage - grid growth
@@ -100,6 +107,12 @@ namespace Wonderland.Core
             SortEnabled = BindSynced(config, configSync, "4 - Sort", "SortEnabled", true, "Enable background stack consolidation (merging partial stacks) within containers.");
             SortInterval = BindSynced(config, configSync, "4 - Sort", "SortInterval", 30f, "Seconds between sort sweep batches.", 5f, 300f);
             SortBatchSize = BindSyncedInt(config, configSync, "4 - Sort", "SortBatchSize", 10, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
+
+            ContainerRowsEnabled = BindSynced(config, configSync, "5 - Container Rows", "ContainerRowsEnabled", true, "Grow every player-built container to ContainerRowMultiplier times its vanilla rows, rendered by completely vanilla clients. Vanilla's own load path accepts item rows beyond the prefab grid and resizes the chest to fit them (client Container.UpdateRows), so the server only has to keep one stack parked in the last row. Width and stack sizes cannot be changed this way: a vanilla client refuses extra columns and clamps stacks on load.");
+            ContainerRowMultiplier = BindSynced(config, configSync, "5 - Container Rows", "ContainerRowMultiplier", 2f, "Multiplier on each player-built container's vanilla row count. 2 doubles it: a 5x2 wood chest becomes 5x4, an 8x4 reinforced chest 8x8. 1 leaves containers at vanilla size. Total rows are capped at 32.", 1f, 4f);
+            ContainerRowsInterval = BindSynced(config, configSync, "5 - Container Rows", "ContainerRowsInterval", 5f, "Seconds between anchor sweep batches.", 0.5f, 60f);
+            ContainerRowsBatchSize = BindSyncedInt(config, configSync, "5 - Container Rows", "ContainerRowsBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
+            ContainerRowsExcludedContainers = BindSynced(config, configSync, "5 - Container Rows", "ContainerRowsExcludedContainers", "", "Comma-separated container prefab names to keep at vanilla size. World-spawned containers (tombstones, treasure and dungeon chests, cargo crates) are never grown regardless.");
 
 
             RaidBlockEnabled = BindSynced(config, configSync, "6 - Raids", "RaidBlockEnabled", true, "Block configured raid events from triggering in configured biomes.");

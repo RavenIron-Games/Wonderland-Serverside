@@ -6,23 +6,22 @@ using Wonderland.Core.Data;
 namespace Wonderland.Subsystems.Storage
 {
     /// <summary>
-    /// The container overflow guard. Wonderland no longer grows containers or boosts stack sizes -
-    /// both were dropped after testing confirmed a vanilla client simply clamps them away - but the
-    /// guard remains, because a container that was grown by an earlier version is still out there in
-    /// saved worlds and is still dangerous.
+    /// The container overflow guard: rehomes anything a vanilla client would silently discard the
+    /// moment it loads the chest. What a vanilla 1.0.7 client actually does on load (client decompile,
+    /// Inventory.AddItem 67784 and 68817, reached from Container.Load with skipValidPositionCheck=true):
+    ///  - an item whose COLUMN is at or beyond the prefab width is refused and dropped;
+    ///  - an item whose ROW is beyond the prefab height is accepted, and Container.UpdateRows() grows
+    ///    the chest to fit it - that is the whole basis of ContainerRows;
+    ///  - a stack above the client's m_maxStackSize is clamped down to it.
+    /// So "overflow" here means: x >= vanilla width, y >= the height Wonderland itself is targeting
+    /// for this prefab (vanilla, or vanilla x ContainerRowMultiplier when eligible - so lowering the
+    /// setting later pulls the abandoned rows back in), or stack > vanilla max. Anything found is
+    /// rebuilt into a properly-sized inventory; what no longer fits goes to the nearest sibling
+    /// container with room, and failing that to the ItemCache. Nothing is ever discarded.
     ///
-    /// Since every connecting client is plain vanilla (Wonderland never ships a client component),
-    /// the danger isn't "an unmodded peer" - it's ANY peer, always, the moment their client loads a
-    /// container whose stored grid position or stack size exceeds vanilla's raw Container/ItemData
-    /// limits. Inventory.Load's AddItem(prefabHash, itemData) bounds-checks position against the
-    /// LOCAL m_width/m_height and clamps stack against the LOCAL m_maxStackSize, silently discarding
-    /// the excess - and that loss only becomes permanent once that peer's own Container.Save() fires.
-    /// This guard rehomes the excess into a sibling container (or the ItemCache) first.
-    ///
-    /// Enforcement rides the vacuum/production-supply/sort sweep's own regular interval rather than a
-    /// Harmony hook on RPC_RequestOpen - that RPC only has anything to route to on whichever machine
-    /// last had a *live* Container instance, which per this whole plan's foundational finding is
-    /// essentially never the dedicated server, so a hook there could simply never fire when it matters.
+    /// Enforcement rides the vacuum sweep's regular interval rather than a Harmony hook on
+    /// RPC_RequestOpen - that RPC only runs on whichever machine has a live Container instance, which
+    /// on a dedicated server is essentially never the server itself.
     /// </summary>
     public static class GridGrowth
     {
@@ -39,22 +38,19 @@ namespace Wonderland.Subsystems.Storage
         }
 
         /// <summary>
-        /// Checks whether anything currently in <paramref name="inventory"/> exceeds vanilla's raw
-        /// bounds for this prefab. Cheap - callers should skip the full rebuild below unless this
-        /// says there is actually something to fix, so an under-filled boosted container isn't
-        /// pointlessly reshuffled every sweep.
+        /// Cheap pre-check so a well-formed chest isn't rebuilt every sweep.
         /// </summary>
-        public static bool HasOverflow(Inventory inventory, string prefabName, Container template)
+        public static bool HasOverflow(Inventory inventory, GameObject prefab, Container template)
         {
-            (int vw, int vh) = GetVanillaSize(prefabName, template);
+            (int vw, _) = GetVanillaSize(prefab.name, template);
+            (_, int targetHeight) = ContainerRows.GetGridSize(prefab, template);
             foreach (ItemDrop.ItemData item in inventory.GetAllItems())
             {
-                if (item.m_gridPos.x >= vw || item.m_gridPos.y >= vh)
+                if (item.m_gridPos.x >= vw || item.m_gridPos.y >= targetHeight)
                 {
                     return true;
                 }
-                int vanillaMax = item.m_shared.m_maxStackSize;
-                if (item.m_stack > vanillaMax)
+                if (item.m_stack > item.m_shared.m_maxStackSize)
                 {
                     return true;
                 }
@@ -63,25 +59,23 @@ namespace Wonderland.Subsystems.Storage
         }
 
         /// <summary>
-        /// Rebuilds <paramref name="inventory"/>'s contents into a fresh vanilla-sized inventory
-        /// (each item re-added with its stack pre-capped to vanilla's remembered max, so the already-
-        /// boosted live SharedData never gets a chance to let a single AddItem call skip the vanilla
-        /// cap). Whatever doesn't fit is homed in the nearest sibling container within
-        /// <paramref name="siblingSearchRadius"/> that has room; if nothing has room, the overflow is
-        /// simply left in the original inventory rather than discarded, and logged as a real warning.
-        /// Returns true if anything changed (caller should ZdoInventoryIO.Save the touched ZDOs).
+        /// Rebuilds <paramref name="inventory"/> into a fresh inventory of the size Wonderland targets
+        /// for this prefab, each stack pre-capped to the vanilla max. Whatever doesn't fit is homed in
+        /// the nearest sibling container within <paramref name="siblingSearchRadius"/> that has room
+        /// (sized by its own prefab's rules); if nothing has room, the leftover goes to the ItemCache
+        /// and is logged as a real warning. Returns true if anything changed (caller saves the ZDO).
         /// </summary>
-        public static bool EnforceOverflow(ZDO containerZdo, Inventory inventory, string prefabName, Container template, float siblingSearchRadius, out bool siblingChanged, out ZDO siblingZdo)
+        public static bool EnforceOverflow(ZDO containerZdo, Inventory inventory, GameObject prefab, Container template, float siblingSearchRadius, out bool siblingChanged, out ZDO siblingZdo)
         {
             siblingChanged = false;
             siblingZdo = null;
-            (int vw, int vh) = GetVanillaSize(prefabName, template);
-            if (!HasOverflow(inventory, prefabName, template))
+            if (!HasOverflow(inventory, prefab, template))
             {
                 return false;
             }
 
-            var scratch = new Inventory("wonderland_overflow_scratch", null, vw, vh);
+            (int width, int height) = ContainerRows.GetGridSize(prefab, template);
+            var scratch = new Inventory("wonderland_overflow_scratch", null, width, height);
             var overflowRemaining = new List<ItemDrop.ItemData>();
 
             foreach (ItemDrop.ItemData item in new List<ItemDrop.ItemData>(inventory.GetAllItems()))
@@ -118,10 +112,11 @@ namespace Wonderland.Subsystems.Storage
                 return true;
             }
 
-            ZDO sibling = FindNearestSiblingContainer(containerZdo, siblingSearchRadius);
+            ZDO sibling = FindNearestSiblingContainer(containerZdo, siblingSearchRadius, out GameObject siblingPrefab, out Container siblingTemplate);
             if (sibling != null)
             {
-                Inventory siblingInv = ZdoInventoryIO.Load(sibling, template.m_width, template.m_height);
+                (int sw, int sh) = ContainerRows.GetGridSize(siblingPrefab!, siblingTemplate!);
+                Inventory siblingInv = ZdoInventoryIO.Load(sibling, sw, sh);
                 if (siblingInv != null)
                 {
                     var stillLeftover = new List<ItemDrop.ItemData>();
@@ -147,17 +142,19 @@ namespace Wonderland.Subsystems.Storage
                 Vector3 pos = containerZdo.GetPosition();
                 foreach (ItemDrop.ItemData item in overflowRemaining)
                 {
-                    ItemCache.Store(pos, item, $"GridGrowth:{prefabName}");
+                    ItemCache.Store(pos, item, $"GridGrowth:{prefab.name}");
                 }
                 WonderlandDebug.LogWarning(
-                    $"[GridGrowth] {overflowRemaining.Count} stack(s) in container '{prefabName}' at {pos:F1} exceeded vanilla capacity and no sibling container had room. Safely moved to Wonderland ItemCache so items can never be lost.");
+                    $"[GridGrowth] {overflowRemaining.Count} stack(s) in container '{prefab.name}' at {pos:F1} exceeded its capacity and no sibling container had room. Moved to the Wonderland ItemCache so nothing is lost.");
             }
 
             return true;
         }
 
-        private static ZDO FindNearestSiblingContainer(ZDO self, float radius)
+        private static ZDO FindNearestSiblingContainer(ZDO self, float radius, out GameObject? prefab, out Container? template)
         {
+            prefab = null;
+            template = null;
             List<ZDO> nearby = ZdoSpatialQuery.FindNear(self.GetPosition(), radius);
             foreach (ZDO candidate in nearby)
             {
@@ -165,10 +162,14 @@ namespace Wonderland.Subsystems.Storage
                 {
                     continue;
                 }
-                if (ZNetScene.instance.GetPrefab(candidate.GetPrefab())?.GetComponent<Container>() == null)
+                GameObject candidatePrefab = ZNetScene.instance.GetPrefab(candidate.GetPrefab());
+                Container candidateTemplate = candidatePrefab != null ? candidatePrefab.GetComponent<Container>() : null;
+                if (candidateTemplate == null)
                 {
                     continue;
                 }
+                prefab = candidatePrefab;
+                template = candidateTemplate;
                 return candidate;
             }
             return null;

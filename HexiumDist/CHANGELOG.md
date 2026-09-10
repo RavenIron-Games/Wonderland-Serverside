@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+- **Container Rows: bigger chests on vanilla clients, server-side only.** Every player-built container
+  has its rows multiplied by `ContainerRowMultiplier` - doubled by default, so a 5x2 wood chest
+  becomes 5x4 and an 8x4 reinforced chest 8x8 - and players see it with nothing installed on their
+  side. 0.2.6 concluded that a vanilla client "discards anything stored beyond its own grid"; that
+  was wrong for rows, and only rows. The 1.0 client load path (`Inventory.AddItem` with
+  `skipValidPositionCheck`, reached from `Container.Load`) refuses an item in a column past the grid
+  but accepts one in a row past it, and `Container.UpdateRows()` then resizes the chest to its lowest
+  occupied row; the chest panel is a scrolling grid. So the server keeps one stack parked in the last
+  row - a pure position move that can never add, remove or resize a stack, so a write that loses a
+  race against a client changes nothing - and vanilla does the rest. Materials are placed
+  bottom-first by vanilla anyway, so the anchor mostly maintains itself. The vacuum, production supply
+  and sort all work with the grown grid. New config section `5 - Container Rows`. Stack sizes stay
+  vanilla: the same load path clamps every stack to the client's own maximum, and no RPC, ZDO field or
+  global key a vanilla client honours can change that. Rows grow; width does not.
+
+### Changed
+- **Overflow guard now follows the real client rules**: a column past vanilla width, a row past the
+  height Wonderland targets for that container, or a stack above vanilla max. Lowering
+  `ContainerRowMultiplier` later pulls items out of the abandoned rows back into the chest or a sibling.
+  Sibling containers are sized by their own prefab's rules rather than the source chest's.
+- **The README no longer carries version information.** It is the how-to-use and feature reference;
+  this changelog is the record of what changed when.
+
 ## 0.2.7
 
 ### Fixed

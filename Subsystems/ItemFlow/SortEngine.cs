@@ -64,14 +64,20 @@ namespace Wonderland.Subsystems.ItemFlow
                 return;
             }
 
-            (int width, int height) = GridGrowth.GetVanillaSize(prefab.name, template);
+            (int width, int height) = ContainerRows.GetGridSize(prefab, template);
             Inventory inventory = ZdoInventoryIO.Load(zdo, width, height);
             if (inventory == null)
             {
                 return;
             }
 
-            if (MergePartialStacks(inventory))
+            bool changed = MergePartialStacks(inventory);
+            if (changed && ContainerRows.IsEnabled && ContainerRows.IsEligible(prefab, template))
+            {
+                // A merge can empty the stack that was holding the grown rows open; re-park before saving.
+                ContainerRows.EnsureAnchor(inventory, GridGrowth.GetVanillaSize(prefab.name, template).height, height, out _);
+            }
+            if (changed)
             {
                 ZdoInventoryIO.Save(zdo, inventory);
             }
