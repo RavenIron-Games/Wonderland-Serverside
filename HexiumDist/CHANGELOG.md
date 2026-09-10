@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- **Player Controls: operate Wonderland from a vanilla client with emotes.** Stand next to a kiln,
+  smelter or fire and `/nonono` switches its auto-supply off (Wonderland stops loading it, whatever
+  is inside burns out, hand-feeding still works, the switch survives restarts); `/thumbsup` switches
+  it back on; `/comehere` drops your cached items at your feet. The server replies with an on-screen
+  message. Emotes are the control because they are the only player signal a stock client always
+  delivers: a custom slash command never leaves the client (`Chat.InputText` runs it as a local
+  console command and prints "not a recognized command"), and plain chat is sent only to *other*
+  players (`ZRoutedRpc.InvokeRoutedRPC` never routes a self-targeted message), so a player alone on
+  the server produces no chat traffic at all. An emote is written into the character ZDO, which
+  always reaches the server, from the emote wheel on every platform or typed in chat. New config
+  section `13 - Player Controls`; every emote and the range are configurable.
+- **`KilnWoodTypes`** in `3 - Production Supply`: which wood the auto-supply may load into a
+  charcoal kiln (any smelter-family station whose only product is Coal). Default `Wood`.
+
+### Changed
+- **Kilns are fed plain wood only by default.** Previously the auto-supply loaded every wood a kiln
+  accepts, so fine wood, core wood and blackwood in a linked chest were turned into coal. List the
+  types you want in `KilnWoodTypes`, or leave it empty for the old behaviour. Hand-feeding is vanilla
+  and unaffected.
+- The switched-off station list is a mod-side file (`Wonderland.SupplyOff.<WorldName>.dat`) rather
+  than a write to the station's ZDO: the owning client rewrites that ZDO every second while the
+  station runs, and a server write there can lose the race. Nothing about this feature moves items.
+
+### Removed
+- The `/cache` and `/cache claim` chat hook. It patched `Chat.RPC_ChatMessage`, which never runs on
+  a dedicated server, and the chat text it waited for is never sent by a solo player anyway. Cache
+  recovery is the `/comehere` emote.
+
 ## 0.3.0
 
 ### Added

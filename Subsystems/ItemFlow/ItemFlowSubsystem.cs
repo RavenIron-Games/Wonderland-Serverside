@@ -3,6 +3,7 @@ using HarmonyLib;
 using ServerSync;
 using UnityEngine;
 using Wonderland.Core;
+using Wonderland.Core.Data;
 
 namespace Wonderland.Subsystems.ItemFlow
 {
@@ -20,19 +21,23 @@ namespace Wonderland.Subsystems.ItemFlow
             Core.Data.ContainerRegistry.Discover();
             VacuumEngine.Initialize();
             ProductionSupplyEngine.Initialize();
+            SupplySwitch.Initialize();
             SortEngine.Initialize();
         }
 
         public void OnUpdate()
         {
             float dt = Time.deltaTime;
+            EmoteSignals.OnUpdate(dt);
             VacuumEngine.OnUpdate(dt);
             ProductionSupplyEngine.OnUpdate(dt);
+            SupplySwitch.OnUpdate(dt);
             SortEngine.OnUpdate(dt);
         }
 
         public void Shutdown()
         {
+            SupplySwitch.Shutdown();
         }
     }
 }

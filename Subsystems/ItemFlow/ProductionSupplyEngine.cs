@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Wonderland.Core;
@@ -16,20 +17,36 @@ namespace Wonderland.Subsystems.ItemFlow
     /// Two distinct resources for Smelter-family, not one: fuel (what keeps it burning) and the ore/
     /// process-material queue (what's actually being converted) are separate ZDO fields with
     /// separate caps (m_maxFuel vs m_maxOre).
+    ///
+    /// Two player-facing controls sit on top: a station a player has switched off (SupplySwitch) is
+    /// skipped entirely, and a charcoal kiln - any smelter-family station whose only product is Coal -
+    /// is only ever loaded with the wood types listed in KilnWoodTypes, so fine wood, core wood and
+    /// blackwood in a linked chest are not quietly turned into coal. Both only govern what this engine
+    /// loads; a player feeding a station by hand is vanilla and untouched.
     /// </summary>
     public static class ProductionSupplyEngine
     {
         private const string Tag = "ProductionSupply";
+        private const string KilnProduct = "Coal";
 
         private static ZdoSpatialQuery.PrefabSetScanner _fireplaceScanner;
         private static ZdoSpatialQuery.PrefabSetScanner _smelterScanner;
+        /// <summary>Prefab hash of every tracked station -> its own display name ("$piece_charcoalkiln"), for player toasts.</summary>
+        private static readonly Dictionary<int, string> _stations = new Dictionary<int, string>();
+        private static readonly HashSet<int> _kilns = new HashSet<int>();
+        private static HashSet<string> _kilnInputs;
+        private static string _kilnInputsRaw;
         private static float _timer;
         private static readonly List<ZDO> _buffer = new List<ZDO>();
+        private static readonly List<ZDO> _nearBuffer = new List<ZDO>();
 
         public static void Initialize()
         {
+            _stations.Clear();
+            _kilns.Clear();
             var fireplaceNames = new List<string>();
             var smelterNames = new List<string>();
+            var kilnNames = new List<string>();
             if (ZNetScene.instance != null)
             {
                 foreach (GameObject prefab in ZNetScene.instance.m_prefabs)
@@ -38,19 +55,33 @@ namespace Wonderland.Subsystems.ItemFlow
                     {
                         continue;
                     }
-                    if (prefab.GetComponent<Fireplace>() != null)
+                    int hash = prefab.name.GetStableHashCode();
+                    Fireplace fireplace = prefab.GetComponent<Fireplace>();
+                    if (fireplace != null)
                     {
                         fireplaceNames.Add(prefab.name);
+                        _stations[hash] = string.IsNullOrEmpty(fireplace.m_name) ? prefab.name : fireplace.m_name;
                     }
-                    if (prefab.GetComponent<Smelter>() != null)
+                    Smelter smelter = prefab.GetComponent<Smelter>();
+                    if (smelter != null)
                     {
                         smelterNames.Add(prefab.name);
+                        _stations[hash] = string.IsNullOrEmpty(smelter.m_name) ? prefab.name : smelter.m_name;
+                        if (IsKiln(smelter))
+                        {
+                            _kilns.Add(hash);
+                            kilnNames.Add(prefab.name);
+                        }
                     }
                 }
             }
             _fireplaceScanner = new ZdoSpatialQuery.PrefabSetScanner(fireplaceNames);
             _smelterScanner = new ZdoSpatialQuery.PrefabSetScanner(smelterNames);
             WonderlandDebug.LogInfo($"[ProductionSupplyEngine] tracking {fireplaceNames.Count} fireplace-family and {smelterNames.Count} smelter-family prefab types.");
+
+            HashSet<string> allowed = KilnInputs();
+            string filter = allowed.Count == 0 ? "any wood the kiln accepts" : string.Join(", ", allowed);
+            WonderlandDebug.LogAlways($"[ProductionSupplyEngine] kiln input filter: {filter} - applies to {kilnNames.Count} kiln prefab(s): {string.Join(", ", kilnNames)}.");
         }
 
         public static void OnUpdate(float dt)
@@ -90,9 +121,70 @@ namespace Wonderland.Subsystems.ItemFlow
             }
         }
 
+        /// <summary>
+        /// The closest tracked station (any fireplace- or smelter-family object) within range of a
+        /// point, with its display name. This is what a player's emote is aimed at.
+        /// </summary>
+        public static bool TryFindNearestStation(Vector3 position, float range, out ZDO station, out string displayName)
+        {
+            station = null;
+            displayName = "";
+            float best = float.MaxValue;
+            foreach (ZDO zdo in ZdoSpatialQuery.FindNear(position, range, _nearBuffer))
+            {
+                if (!_stations.TryGetValue(zdo.GetPrefab(), out string name))
+                {
+                    continue;
+                }
+                float distance = (zdo.GetPosition() - position).sqrMagnitude;
+                if (distance < best)
+                {
+                    best = distance;
+                    station = zdo;
+                    displayName = name;
+                }
+            }
+            return station != null;
+        }
+
+        private static bool IsKiln(Smelter template)
+        {
+            if (template.m_conversion == null || template.m_conversion.Count == 0)
+            {
+                return false;
+            }
+            foreach (Smelter.ItemConversion conversion in template.m_conversion)
+            {
+                if (conversion == null || conversion.m_to == null || conversion.m_to.gameObject.name != KilnProduct)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static HashSet<string> KilnInputs()
+        {
+            string raw = WonderlandConfig.KilnWoodTypes?.Value ?? "Wood";
+            if (_kilnInputs == null || !string.Equals(raw, _kilnInputsRaw, StringComparison.Ordinal))
+            {
+                _kilnInputsRaw = raw;
+                _kilnInputs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string part in raw.Split(','))
+                {
+                    string trimmed = part.Trim();
+                    if (trimmed.Length > 0)
+                    {
+                        _kilnInputs.Add(trimmed);
+                    }
+                }
+            }
+            return _kilnInputs;
+        }
+
         private static void ProcessFireplace(ZDO zdo)
         {
-            if (!zdo.IsValid())
+            if (!zdo.IsValid() || SupplySwitch.IsOff(zdo.m_uid))
             {
                 return;
             }
@@ -118,7 +210,7 @@ namespace Wonderland.Subsystems.ItemFlow
 
         private static void ProcessSmelter(ZDO zdo)
         {
-            if (!zdo.IsValid())
+            if (!zdo.IsValid() || SupplySwitch.IsOff(zdo.m_uid))
             {
                 return;
             }
@@ -150,20 +242,26 @@ namespace Wonderland.Subsystems.ItemFlow
                 int queued = zdo.GetInt(ZDOVars.s_queued);
                 if (queued < template.m_maxOre)
                 {
+                    HashSet<string> kilnFilter = _kilns.Contains(zdo.GetPrefab()) ? KilnInputs() : null;
                     foreach (Smelter.ItemConversion conversion in template.m_conversion)
                     {
                         if (conversion.m_from == null)
                         {
                             continue;
                         }
-                        if (TryConsumeOne(zdo.GetPosition(), conversion.m_from.gameObject.name))
+                        string input = conversion.m_from.gameObject.name;
+                        if (kilnFilter != null && kilnFilter.Count > 0 && !kilnFilter.Contains(input))
+                        {
+                            continue;
+                        }
+                        if (TryConsumeOne(zdo.GetPosition(), input))
                         {
                             if (!ownedForWrite)
                             {
                                 zdo.SetOwner(ZNet.GetUID());
                                 ownedForWrite = true;
                             }
-                            zdo.Set("item" + queued, conversion.m_from.gameObject.name);
+                            zdo.Set("item" + queued, input);
                             zdo.Set(ZDOVars.s_queued, queued + 1);
                             break;
                         }

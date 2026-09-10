@@ -29,6 +29,7 @@ experience.
   - [🗂️ Background Sort](#️-background-sort)
   - [📐 Container Rows](#-container-rows)
   - [📦 Item Cache & Overflow Guard](#-item-cache--overflow-guard)
+  - [🎮 Player Controls](#-player-controls)
   - [⚔️ Raids & Night Spawns](#️-raids--night-spawns)
   - [👥 Player Cap](#-player-cap)
   - [🏚️ Structure Upkeep](#️-structure-upkeep)
@@ -49,7 +50,7 @@ experience.
 Containers and carts quietly pull in matching ground items within a configurable radius — **match-required**, so a chest only tops up an item type it already holds and never has a new one sprout inside it. Mining spoils, harvest drops, anything on the ground near a linked container just walks itself home. Paired with this: when a player harvests something, nearby ripe pickables of the same type get swept in too, so one swing of the axe can clear a whole stand of trees or a patch of berries instead of just the one you touched. Exclusion lists (containers and items) keep this out of anything you want left alone.
 
 ### 🔥 Production Supply
-Fireplaces, hearths, torches, smelters, and kilns stay fed from linked containers within range — **fuel and process material both**, tracked separately, so a smelter never runs dry of ore just because its coal bin is full. Runs independent of anyone being online: a base doesn't go dark and a smelter doesn't go idle because its owner logged off. A configurable **reserve floor** means a source container is never drained below a minimum stock, so automation can't strip a stockpile out from under you.
+Fireplaces, hearths, torches, smelters, and kilns stay fed from linked containers within range — **fuel and process material both**, tracked separately, so a smelter never runs dry of ore just because its coal bin is full. Runs independent of anyone being online: a base doesn't go dark and a smelter doesn't go idle because its owner logged off. A configurable **reserve floor** means a source container is never drained below a minimum stock, so automation can't strip a stockpile out from under you. Charcoal kilns are only loaded with the wood types in `KilnWoodTypes` — plain wood by default, so fine wood, core wood and blackwood in a linked chest are never turned into coal behind your back — and any station can be switched off by a player standing next to it (see Player Controls).
 
 ### 🗂️ Background Sort
 A slow, low-frequency pass quietly merges partial stacks of the same item across a base's containers. Consolidation only — a stack that's already whole is never touched, and nothing gets relocated while you're actively looking at it.
@@ -62,7 +63,18 @@ Wonderland does **not** boost stack sizes: a vanilla client — the only kind th
 - **Never-Lost Overflow Guard**: Any items a chest cannot actually hold — a column past vanilla width, a row past the chest's grown height, a stack above vanilla max — are safely routed into nearby sibling chests, or into the persistent server-side `ItemCache` (`Wonderland.Cache.<WorldName>.dat`) if all nearby chests are full.
 - **Automatic Drain**: As soon as new chests are placed or space opens up, cached items automatically flow right back into storage.
 
-> ⚠️ The `/cache` and `/cache claim` chat commands do not currently work on a dedicated server — chat is relayed as per-recipient targeted packets, so the server never sees the text. Automatic draining is unaffected.
+> Lost something to the cache? Stand where you want it back and use the `/comehere` emote (see Player Controls) — Wonderland drops the cached stacks at your feet.
+
+### 🎮 Player Controls
+Players can operate parts of Wonderland from a completely vanilla client, on any platform, with **emotes** — from the emote wheel or typed in chat as the vanilla command. A stock client never sends a custom slash command to a server (it runs locally and prints "not a recognized command"), and plain chat is only delivered to *other* players, so someone alone on the server produces no chat traffic at all. Emotes are different: every one is written into the player's character data, which always reaches the server. Wonderland answers with a normal on-screen message.
+
+| Do this | Standing near | Effect |
+| :--- | :--- | :--- |
+| `/nonono` | a kiln, smelter or fire | Auto-supply **off** for that station: Wonderland stops loading it, whatever is inside burns out, feeding it by hand still works. Survives restarts. |
+| `/thumbsup` | the same station | Auto-supply back **on**. |
+| `/comehere` | anywhere | Drops your cached items (see Item Cache) at your feet — the ones within 30 m, or all of them if none are nearby. |
+
+The nearest station within `ControlRange` (5 m by default) is the target. Every emote and the range are configurable in section `13 - Player Controls`.
 
 ### ⚔️ Raids & Night Spawns
 Block configured high-tier raid events from ever triggering in configured biomes (defaults: Meadows, BlackForest) — genuinely server-authoritative, not a guess. A companion system destroys hostile night-spawn creatures matching a configured biome/tier list the instant the server registers them, so a Meadows base stays a Meadows base no matter how long it's been standing.
@@ -98,7 +110,7 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 | :--- | :--- |
 | `1 - General` | Whether the server locks synced config against client overrides (default on). |
 | `2 - Vacuum & Auto-Harvest` | Enable, interval, batch size, radius, and exclusion lists for the vacuum/auto-harvest sweep. |
-| `3 - Production Supply` | Enable, interval, batch size, range, and reserve floor for fuel/process-material auto-supply. |
+| `3 - Production Supply` | Enable, interval, batch size, range, reserve floor, and the kiln wood-type filter for fuel/process-material auto-supply. |
 | `4 - Sort` | Enable, interval, and batch size for background stack consolidation. |
 | `5 - Container Rows` | Enable, row multiplier, sweep interval, batch size, and exclusion list for server-side chest row growth on vanilla clients. |
 | `6 - Raids` | Enable, blocked biomes, and blocked raid-event name list. |
@@ -107,6 +119,7 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 | `9 - Structure Upkeep` | Enable, interval, and batch size for the no-decay correction pass. |
 | `10 - Starter Grant` | Enable, kit contents, boat hull prefab, and boat placement search radius. |
 | `12 - Security` | Vitals guard (HP ceiling and stamina plausibility, detect-only), position watch (speed/fly detection), and the container item-integrity sweep. |
+| `13 - Player Controls` | Enable, target range, and which emotes switch a station's auto-supply off and on or recover cached items. |
 
 ### Local to Your Game
 | Setting | Section | What it does |
@@ -128,8 +141,7 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 ## 📥 Installation
 
 Wonderland is a **server-side-only** mod — install it once, on the server, and every connected player benefits with nothing to download.
-
-**With Gale (recommended):** just install Wonderland on the server — the dependency above is pulled in for you.
+Just install Wonderland on the server — the dependency above is pulled in for you.
 
 **Manual install:**
 1. Install **BepInExPack Valheim** on the server.

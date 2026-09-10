@@ -26,6 +26,14 @@ namespace Wonderland.Core
         public static ConfigEntry<int>? ProductionSupplyBatchSize;
         public static ConfigEntry<float>? ProductionSupplyRange;
         public static ConfigEntry<int>? ProductionSupplyReserve;
+        public static ConfigEntry<string>? KilnWoodTypes;
+
+        // 13 - Player Controls (vanilla emotes as the player-to-server signal)
+        public static ConfigEntry<bool>? PlayerControlsEnabled;
+        public static ConfigEntry<float>? ControlRange;
+        public static ConfigEntry<string>? SupplyOffEmote;
+        public static ConfigEntry<string>? SupplyOnEmote;
+        public static ConfigEntry<string>? CacheClaimEmote;
 
         // Item flow - sort
         public static ConfigEntry<bool>? SortEnabled;
@@ -103,6 +111,7 @@ namespace Wonderland.Core
             ProductionSupplyBatchSize = BindSyncedInt(config, configSync, "3 - Production Supply", "ProductionSupplyBatchSize", 20, "How many fireplace/smelter ZDOs to advance each scanner by per sweep.", 1, 500);
             ProductionSupplyRange = BindSynced(config, configSync, "3 - Production Supply", "ProductionSupplyRange", 15f, "Radius to search for linked source containers.", 1f, 50f);
             ProductionSupplyReserve = BindSyncedInt(config, configSync, "3 - Production Supply", "ProductionSupplyReserve", 1, "Minimum stock of a matching item a source container always keeps - never pulled below this.", 0, 999);
+            KilnWoodTypes = BindSynced(config, configSync, "3 - Production Supply", "KilnWoodTypes", "Wood", "Comma-separated item prefab names the auto-supply may load into charcoal kilns (any smelter-family station whose only product is Coal). Default is plain Wood only, so fine wood, core wood and blackwood sitting in a linked chest are never turned into coal behind your back. Empty allows every wood the kiln accepts. Players feeding a kiln by hand are vanilla and unaffected.");
 
             SortEnabled = BindSynced(config, configSync, "4 - Sort", "SortEnabled", true, "Enable background stack consolidation (merging partial stacks) within containers.");
             SortInterval = BindSynced(config, configSync, "4 - Sort", "SortInterval", 30f, "Seconds between sort sweep batches.", 5f, 300f);
@@ -114,6 +123,12 @@ namespace Wonderland.Core
             ContainerRowsBatchSize = BindSyncedInt(config, configSync, "5 - Container Rows", "ContainerRowsBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
             ContainerRowsExcludedContainers = BindSynced(config, configSync, "5 - Container Rows", "ContainerRowsExcludedContainers", "", "Comma-separated container prefab names to keep at vanilla size. World-spawned containers (tombstones, treasure and dungeon chests, cargo crates) are never grown regardless.");
 
+
+            PlayerControlsEnabled = BindSynced(config, configSync, "13 - Player Controls", "PlayerControlsEnabled", true, "Let players operate Wonderland from a completely vanilla client with emotes. A stock client never sends a custom slash command to the server (it runs locally and prints 'not a recognized command'), and plain chat is only delivered to other players, so a player alone on the server produces no chat traffic at all. Emotes are written into the character ZDO and always reach the server, from the emote wheel on any platform or typed in chat (/nonono, /thumbsup, /comehere). The server answers with an on-screen message.");
+            ControlRange = BindSynced(config, configSync, "13 - Player Controls", "ControlRange", 5f, "How close, in metres, a player must stand to the kiln, smelter or fire an emote is aimed at. The nearest one within this range is the target.", 1f, 20f);
+            SupplyOffEmote = BindSynced(config, configSync, "13 - Player Controls", "SupplyOffEmote", "nonono", "Emote that switches the auto-supply OFF for the nearest station: Wonderland stops loading it, whatever is inside burns out, hand-feeding still works. Vanilla emote names: wave, sit, challenge, cheer, nonono, thumbsup, point, blowkiss, bow, cower, cry, despair, flex, comehere, headbang, kneel, laugh, roar, shrug, dance, relax, toast, rest, vibe, loveyou.");
+            SupplyOnEmote = BindSynced(config, configSync, "13 - Player Controls", "SupplyOnEmote", "thumbsup", "Emote that switches the auto-supply back ON for the nearest station.");
+            CacheClaimEmote = BindSynced(config, configSync, "13 - Player Controls", "CacheClaimEmote", "comehere", "Emote that drops cached items (the overflow guard's item cache) at the player's feet - cached stacks within 30m first, or every cached stack in the world if none are nearby. Nothing happens when the cache is empty.");
 
             RaidBlockEnabled = BindSynced(config, configSync, "6 - Raids", "RaidBlockEnabled", true, "Block configured raid events from triggering in configured biomes.");
             RaidBlockedBiomes = BindSynced(config, configSync, "6 - Raids", "RaidBlockedBiomes", "Meadows,BlackForest", "Comma-separated Heightmap.Biome names to block high-tier raids in.");

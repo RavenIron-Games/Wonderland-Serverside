@@ -13,13 +13,13 @@ namespace Wonderland.Subsystems.Storage
 
         public void Initialize(ConfigFile config, ConfigSync configSync, Harmony harmony)
         {
-            SubsystemRegistry.SafePatch(harmony, typeof(ChatCommands));
         }
 
         public void OnWorldReady()
         {
             ItemCache.Initialize();
             ContainerRowsEngine.Initialize();
+            CacheClaimControl.Initialize();
         }
 
         public void OnUpdate()
