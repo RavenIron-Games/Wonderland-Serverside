@@ -47,8 +47,15 @@ namespace Wonderland.Subsystems.WorldGovernor
         /// <summary>Looser ceiling at the spawn altar, whose stamped platform sits above base terrain.</summary>
         private const float TempleVerticalAllowance = 15f;
 
-        /// <summary>Metres of clear water a starter boat needs around it, so hulls stop stacking.</summary>
-        private const float BoatClearance = 12f;
+        /// <summary>
+        /// Metres of clear water a starter boat needs around it, so hulls stop stacking. Deliberately
+        /// close to a Karve's own length rather than generous: every player spawning at the same altar
+        /// gets the same "nearest water" answer, so each boat placed pushes the next one further out.
+        /// Measured on a test server at 12m, that cost about 21m of extra walk per player and grew
+        /// without bound - 278m, 299m, 321m, 343m for the first four. Packing tighter trades a little
+        /// elbow room for a distance that stops running away.
+        /// </summary>
+        private const float BoatClearance = 6f;
 
         private static readonly HashSet<long> _lockedThisSession = new HashSet<long>();
         private static readonly Dictionary<long, float> _pendingPlayerWait = new Dictionary<long, float>();

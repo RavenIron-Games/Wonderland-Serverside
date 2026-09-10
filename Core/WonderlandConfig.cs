@@ -79,7 +79,7 @@ namespace Wonderland.Core
         {
             ServerConfigLocked = BindSynced(config, configSync, "1 - General", "ServerConfigLocked", true, "If true, only server admins can modify synced configuration.");
             configSync.AddLockingConfigEntry(ServerConfigLocked);
-            VerboseLogging = BindLocal(config, "1 - General", "VerboseLogging", false, "Enable verbose diagnostic log messages. Security findings always log regardless of this setting.");
+            VerboseLogging = BindLocal(config, "1 - General", "VerboseLogging", true, "Enable verbose diagnostic log messages, including every item transfer the mod makes. On by default: a suspected duplication is only diagnosable if the transfer that caused it was already being logged when it happened. Security findings and ledger rejections always log regardless of this setting.");
 
             VacuumEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEnabled", true, "Enable containers auto-vacuuming matching ground items nearby. Match-required: only tops up an item type a container already holds.");
             VacuumInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumInterval", 2f, "Seconds between vacuum sweep batches.", 0.5f, 30f);
@@ -117,9 +117,9 @@ namespace Wonderland.Core
             StructureUpkeepBatchSize = BindSyncedInt(config, configSync, "9 - Structure Upkeep", "StructureUpkeepBatchSize", 50, "How many WearNTear ZDOs to advance the scanner by per sweep.", 1, 2000);
 
             StarterGrantEnabled = BindSynced(config, configSync, "10 - Starter Grant", "StarterGrantEnabled", true, "Grant a one-time starter kit and boat the first time a character is seen in this world. Recorded as a world global key per character (wonderland_starter_<playerID>), saved with the world.");
-            StarterKitItems = BindSynced(config, configSync, "10 - Starter Grant", "StarterKitItems", "Wood:20,Stone:10,Flint:5", "Comma-separated PrefabName:Amount pairs spawned as ground items at spawn.");
+            StarterKitItems = BindSynced(config, configSync, "10 - Starter Grant", "StarterKitItems", "Wood:50,Stone:10,Flint:5,AxeFlint:1,KnifeFlint:1,SpearFlint:1,PickaxeAntler:1", "Comma-separated PrefabName:Amount pairs spawned as ground items at spawn.");
             StarterBoatPrefab = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatPrefab", "Karve", "Vanilla hull prefab name granted (e.g. Raft, Karve, VikingShip).");
-            StarterBoatSearchRadius = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatSearchRadius", 300f, "Radius to search for water near spawn to place the boat in.", 20f, 1500f);
+            StarterBoatSearchRadius = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatSearchRadius", 200f, "Radius to search for water near spawn to place the boat in. The search always starts at the shoreline nearest the player and works outward, so this is a ceiling, not a target.", 20f, 1500f);
             StarterBoatMapPin = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatMapPin", true, "Send a vanilla map pin discovery to the player's map marking the starter boat.");
 
             VitalsGuardEnabled = BindSynced(config, configSync, "12 - Security", "VitalsGuardEnabled", true, "Flag max HP above a configured ceiling and implausible current stamina. Detect-only: neither can be corrected from the server - the owning client rewrites both every second and discards stale server writes while moving.");

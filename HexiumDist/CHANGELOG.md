@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.7
+
+### Fixed
+- **Starter boats drifting further out to sea with every player.** Each boat claimed its spot and the
+  next player's search had to start beyond it, so the walk grew without bound - measured at 278m, 299m,
+  321m and 343m for the first four players on one test world, roughly 21m added per player. The required
+  clearance between hulls is now 6m rather than 12m, close to a Karve's own length, which packs them
+  tightly enough that the distance stops running away. Boats still never overlap.
+
+### Changed
+- **Defaults now match what a real server actually wants**, rather than the conservative values the
+  features were first written with:
+  - The starter kit is `Wood:50,Stone:10,Flint:5,AxeFlint:1,KnifeFlint:1,SpearFlint:1,PickaxeAntler:1` -
+    enough wood to build with and the flint tools needed to use it, instead of raw materials alone.
+  - The boat water search ceiling is 200m rather than 300m. The search always begins at the shoreline
+    nearest the player and works outward, so this is a limit, not a target.
+  - **Verbose logging is on by default.** Every item transfer the mod makes is now recorded. This is a
+    deliberate trade of log volume for diagnosability: a suspected duplication can only be diagnosed
+    from a log that was already recording the transfer when it happened, and the alternative - turn it
+    on and reproduce - means the interesting event has already been missed. Rejections and security
+    findings log regardless, as before. Set it to `false` if log size matters more on your server.
+
 ## 0.2.6
 
 ### Removed
