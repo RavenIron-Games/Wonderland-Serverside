@@ -4,7 +4,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>Wonderland</AssemblyName>
     <RootNamespace>Wonderland</RootNamespace>
-    <Version>0.2.5</Version>
+    <Version>0.2.6</Version>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <!-- Every warning here is CS8600/2/3/4/18/25 - nullable-reference-type static analysis flagging

@@ -9,7 +9,7 @@ namespace Wonderland.Subsystems.Storage
 {
     /// <summary>
     /// Server-side persistent cache for items that would otherwise be lost - specifically container
-    /// overflow from GridGrowth / StackCapacity that cannot fit into vanilla-bounded containers or
+    /// overflow that cannot fit into vanilla-bounded containers or
     /// nearby siblings. When a vanilla client opens a container whose contents exceed vanilla bounds,
     /// vanilla's Inventory.Load silently discards the excess items; ItemCache extracts and preserves
     /// those items before any client can open the container, stores them on disk across reboots,

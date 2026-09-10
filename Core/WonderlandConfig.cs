@@ -33,15 +33,8 @@ namespace Wonderland.Core
         public static ConfigEntry<int>? SortBatchSize;
 
         // Storage - stack size
-        public static ConfigEntry<bool>? StackSizeEnabled;
-        public static ConfigEntry<float>? StackSizeMultiplier;
-        public static ConfigEntry<float>? StackSizeAbsoluteMax;
-        public static ConfigEntry<string>? StackSizeExcludedPrefabs;
 
         // Storage - grid growth
-        public static ConfigEntry<bool>? GridGrowthEnabled;
-        public static ConfigEntry<int>? GridGrowthExtraRows;
-        public static ConfigEntry<string>? GridGrowthExcludedPrefabs;
 
         // World governor - raids
         public static ConfigEntry<bool>? RaidBlockEnabled;
@@ -108,13 +101,6 @@ namespace Wonderland.Core
             SortInterval = BindSynced(config, configSync, "4 - Sort", "SortInterval", 30f, "Seconds between sort sweep batches.", 5f, 300f);
             SortBatchSize = BindSyncedInt(config, configSync, "4 - Sort", "SortBatchSize", 10, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
 
-            StackSizeEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeEnabled", false, "Server-side max stack size multiplier. OFF by default: a vanilla client (the only kind that ever connects to a server-only mod) clamps every stack to its own vanilla maximum when it loads a container, and the overflow guard therefore splits boosted stacks back down every sweep - players never see a larger stack. Leave off unless experimenting.");
-            StackSizeMultiplier = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeMultiplier", 2f, "Multiplier applied to every stackable item's vanilla max stack size.", 1f, 20f);
-            StackSizeAbsoluteMax = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeAbsoluteMax", 999f, "Hard ceiling on any single item's max stack size regardless of multiplier.", 1f, 9999f);
-            StackSizeExcludedPrefabs = BindSynced(config, configSync, "5 - Storage Capacity", "StackSizeExcludedPrefabs", "", "Comma-separated item prefab names to leave at vanilla stack size.");
-            GridGrowthEnabled = BindSynced(config, configSync, "5 - Storage Capacity", "GridGrowthEnabled", false, "Server-side extra grid rows for containers. OFF by default: a vanilla client cannot display rows beyond its own container size and discards anything stored there when it loads the chest, so the overflow guard relocates items out of the extra rows every sweep - players never see a bigger grid. Leave off unless experimenting.");
-            GridGrowthExtraRows = BindSyncedInt(config, configSync, "5 - Storage Capacity", "GridGrowthExtraRows", 2, "Extra grid rows added to every container's vanilla height.", 0, 20);
-            GridGrowthExcludedPrefabs = BindSynced(config, configSync, "5 - Storage Capacity", "GridGrowthExcludedPrefabs", "", "Comma-separated container prefab names to leave at vanilla grid size.");
 
             RaidBlockEnabled = BindSynced(config, configSync, "6 - Raids", "RaidBlockEnabled", true, "Block configured raid events from triggering in configured biomes.");
             RaidBlockedBiomes = BindSynced(config, configSync, "6 - Raids", "RaidBlockedBiomes", "Meadows,BlackForest", "Comma-separated Heightmap.Biome names to block high-tier raids in.");
@@ -168,7 +154,6 @@ namespace Wonderland.Core
             bool removedAny = false;
 
             // Renamed, same concept, straightforward carry-across.
-            removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "StackMaxMultiplier", StackSizeMultiplier);
             removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "ContainerVacuumEnabled", VacuumEnabled);
             removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "ContainerVacuumRadius", VacuumRadius);
             removedAny |= TryMigrate(config, "3 - Inventory & Vacuum", "ContainerVacuumInterval", VacuumInterval);

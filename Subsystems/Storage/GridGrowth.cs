@@ -6,16 +6,21 @@ using Wonderland.Core.Data;
 namespace Wonderland.Subsystems.Storage
 {
     /// <summary>
-    /// Real slot-count growth for containers, plus the overflow guard both GridGrowth and
-    /// StackCapacity depend on. See the plan's "overflow guard" section: since every connecting
-    /// client is plain vanilla (Wonderland never ships a client component), the danger isn't "an
-    /// unmodded peer" - it's ANY peer, always, the moment their client loads a container whose stored
-    /// grid position or stack size exceeds vanilla's raw Container/ItemData limits. Inventory.Load's
-    /// AddItem(prefabHash, itemData) bounds-checks position against the LOCAL m_width/m_height and
-    /// clamps stack against the LOCAL m_maxStackSize, silently discarding the excess - and that loss
-    /// only becomes permanent once that peer's own Container.Save() fires.
-    /// Enforcement rides the vacuum/production-supply/sort sweep's own regular interval rather than
-    /// a Harmony hook on RPC_RequestOpen - that RPC only has anything to route to on whichever machine
+    /// The container overflow guard. Wonderland no longer grows containers or boosts stack sizes -
+    /// both were dropped after testing confirmed a vanilla client simply clamps them away - but the
+    /// guard remains, because a container that was grown by an earlier version is still out there in
+    /// saved worlds and is still dangerous.
+    ///
+    /// Since every connecting client is plain vanilla (Wonderland never ships a client component),
+    /// the danger isn't "an unmodded peer" - it's ANY peer, always, the moment their client loads a
+    /// container whose stored grid position or stack size exceeds vanilla's raw Container/ItemData
+    /// limits. Inventory.Load's AddItem(prefabHash, itemData) bounds-checks position against the
+    /// LOCAL m_width/m_height and clamps stack against the LOCAL m_maxStackSize, silently discarding
+    /// the excess - and that loss only becomes permanent once that peer's own Container.Save() fires.
+    /// This guard rehomes the excess into a sibling container (or the ItemCache) first.
+    ///
+    /// Enforcement rides the vacuum/production-supply/sort sweep's own regular interval rather than a
+    /// Harmony hook on RPC_RequestOpen - that RPC only has anything to route to on whichever machine
     /// last had a *live* Container instance, which per this whole plan's foundational finding is
     /// essentially never the dedicated server, so a hook there could simply never fire when it matters.
     /// </summary>
@@ -33,35 +38,6 @@ namespace Wonderland.Subsystems.Storage
             return size;
         }
 
-        /// <summary>The size Wonderland wants this container to behave as - vanilla size plus configured extra rows.</summary>
-        public static (int width, int height) GetIntendedSize(string prefabName, Container template)
-        {
-            (int vw, int vh) = GetVanillaSize(prefabName, template);
-            if (WonderlandConfig.GridGrowthEnabled?.Value != true || IsExcluded(prefabName))
-            {
-                return (vw, vh);
-            }
-            int extraRows = Mathf.Max(0, WonderlandConfig.GridGrowthExtraRows?.Value ?? 0);
-            return (vw, vh + extraRows);
-        }
-
-        private static bool IsExcluded(string prefabName)
-        {
-            string list = WonderlandConfig.GridGrowthExcludedPrefabs?.Value ?? "";
-            if (string.IsNullOrWhiteSpace(list))
-            {
-                return false;
-            }
-            foreach (string entry in list.Split(','))
-            {
-                if (string.Equals(entry.Trim(), prefabName, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         /// <summary>
         /// Checks whether anything currently in <paramref name="inventory"/> exceeds vanilla's raw
         /// bounds for this prefab. Cheap - callers should skip the full rebuild below unless this
@@ -77,7 +53,7 @@ namespace Wonderland.Subsystems.Storage
                 {
                     return true;
                 }
-                int vanillaMax = StackCapacity.GetOriginalMaxStack(item.m_dropPrefab.name, item.m_shared.m_maxStackSize);
+                int vanillaMax = item.m_shared.m_maxStackSize;
                 if (item.m_stack > vanillaMax)
                 {
                     return true;
@@ -110,7 +86,7 @@ namespace Wonderland.Subsystems.Storage
 
             foreach (ItemDrop.ItemData item in new List<ItemDrop.ItemData>(inventory.GetAllItems()))
             {
-                int vanillaMax = StackCapacity.GetOriginalMaxStack(item.m_dropPrefab.name, item.m_shared.m_maxStackSize);
+                int vanillaMax = item.m_shared.m_maxStackSize;
                 int remaining = item.m_stack;
                 while (remaining > 0)
                 {

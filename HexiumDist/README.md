@@ -6,7 +6,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Crossplay](https://img.shields.io/badge/Crossplay-PlayFab%2FXbox_Ready-purple.svg)]()
-[![Version](https://img.shields.io/badge/Version-0.2.5-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.2.6-lightgrey.svg)]()
 [![Valheim 1.0](https://img.shields.io/badge/Valheim-1.0.7_Server-green.svg)]()
 
 *No client install, ever. The server does the work. Built and live-tested on Valheim 1.0.*
@@ -28,7 +28,7 @@ experience.
   - [🧲 Vacuum & Auto-Harvest](#-vacuum--auto-harvest)
   - [🔥 Production Supply](#-production-supply)
   - [🗂️ Background Sort](#️-background-sort)
-  - [📦 Storage Capacity](#-storage-capacity)
+  - [📦 Item Cache & Overflow Guard](#-item-cache--overflow-guard)
   - [⚔️ Raids & Night Spawns](#️-raids--night-spawns)
   - [👥 Player Cap](#-player-cap)
   - [🏚️ Structure Upkeep](#️-structure-upkeep)
@@ -54,11 +54,12 @@ Fireplaces, hearths, torches, smelters, and kilns stay fed from linked container
 ### 🗂️ Background Sort
 A slow, low-frequency pass quietly merges partial stacks of the same item across a base's containers. Consolidation only — a stack that's already whole is never touched, and nothing gets relocated while you're actively looking at it.
 
-### 📦 Storage Capacity & Item Cache
-**Off by default, and honestly labeled.** The mod carries a stack-size multiplier and real grid-row growth, both applied server-side — but a vanilla client (the only kind that ever connects to a server-only mod) clamps every stack to its own vanilla maximum and discards anything stored beyond its own grid the moment it loads a chest. The **overflow guard** and persistent **Item Cache** ensure that never costs anyone an item:
+### 📦 Item Cache & Overflow Guard
+Wonderland does **not** boost stack sizes or grow container grids. Both were tried and removed in 0.2.6: a vanilla client — the only kind that ever connects to a server-only mod — clamps every stack to its own vanilla maximum and discards anything stored beyond its own grid the moment it loads a chest, so the server-side boost was invisible in play and bought nothing. What remains is the safety net, which still matters because containers grown by an earlier version are still out there in saved worlds:
 - **Never-Lost Overflow Guard**: Any items in containers exceeding vanilla bounds are safely routed into nearby sibling chests, or into the persistent server-side `ItemCache` (`Wonderland.Cache.<WorldName>.dat`) if all nearby chests are full.
 - **Automatic Drain**: As soon as new chests are placed or space opens up, cached items automatically flow right back into storage.
-- **In-Game Chat Commands**: Any connected player on any platform can type `/cache` in chat to see cached items, or `/cache claim` to retrieve cached items directly to the ground at their feet.
+
+> ⚠️ The `/cache` and `/cache claim` chat commands do not currently work on a dedicated server — chat is relayed as per-recipient targeted packets, so the server never sees the text. Automatic draining is unaffected.
 
 ### ⚔️ Raids & Night Spawns
 Block configured high-tier raid events from ever triggering in configured biomes (defaults: Meadows, BlackForest) — genuinely server-authoritative, not a guess. A companion system destroys hostile night-spawn creatures matching a configured biome/tier list the instant the server registers them, so a Meadows base stays a Meadows base no matter how long it's been standing.
@@ -96,7 +97,6 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 | `2 - Vacuum & Auto-Harvest` | Enable, interval, batch size, radius, and exclusion lists for the vacuum/auto-harvest sweep. |
 | `3 - Production Supply` | Enable, interval, batch size, range, and reserve floor for fuel/process-material auto-supply. |
 | `4 - Sort` | Enable, interval, and batch size for background stack consolidation. |
-| `5 - Storage Capacity` | Stack-size multiplier and grid growth (both **off by default** — see the feature note), absolute cap, extra rows, and per-prefab exclusion lists. |
 | `6 - Raids` | Enable, blocked biomes, and blocked raid-event name list. |
 | `7 - Night Spawns` | Enable, blocked biomes, and blocked creature prefab list. |
 | `8 - Player Cap` | Maximum concurrent connected players (default 10, vanilla's own limit). |

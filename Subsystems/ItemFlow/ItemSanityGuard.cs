@@ -8,8 +8,8 @@ namespace Wonderland.Subsystems.ItemFlow
     /// move anywhere. The standing integrity sweep (Security/ItemIntegritySweep.cs) runs the same
     /// check against everything already sitting in a container, independent of whether it ever passed
     /// through here. The ceiling is always Wonderland's own configured/boosted max
-    /// (StackCapacity.GetIntendedMaxStack), never vanilla's raw number - checking against vanilla would
-    /// flag the mod's own legitimate boosted stacks as fabricated the moment StackCapacity is enabled.
+    /// the item's own shared max stack - Wonderland no longer boosts that, so it is vanilla's own
+    /// raw number, now that the mod no longer boosts stack sizes at all.
     /// </summary>
     public static class ItemSanityGuard
     {
@@ -27,7 +27,7 @@ namespace Wonderland.Subsystems.ItemFlow
                 return false;
             }
 
-            int ceiling = StackCapacity.GetIntendedMaxStack(item.m_dropPrefab.name, item.m_shared.m_maxStackSize);
+            int ceiling = item.m_shared.m_maxStackSize;
             if (item.m_stack > ceiling)
             {
                 reason = $"stack {item.m_stack} exceeds ceiling {ceiling} for '{item.m_dropPrefab.name}'";

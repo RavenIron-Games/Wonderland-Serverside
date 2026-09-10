@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.6
+
+### Removed
+- **Stack-size multiplier and container grid growth are gone.** Both were verified on a live server and
+  did nothing observable: a vanilla client - the only kind that ever connects to a server-only mod -
+  clamps every stack to its own vanilla maximum and ignores grid slots beyond its own bounds the moment
+  it loads a chest. The server was doing real work that no player could ever see. Rather than leave two
+  settings that quietly amount to nothing, the features and their seven config keys have been removed
+  outright. Any values left in an existing config file are simply ignored.
+
+  The **overflow guard and Item Cache stay**, and are now the whole point of that area. A container grown
+  by an earlier version still exists in saved worlds and is still dangerous - a vanilla client silently
+  discards the excess when it opens one - so the guard continues to rehome anything over vanilla bounds
+  into sibling chests or the cache before that can happen.
+
 ## 0.2.5
 
 Found by watching a live 0.2.4 test server rather than by reading code.

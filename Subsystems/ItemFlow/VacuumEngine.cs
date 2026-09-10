@@ -97,7 +97,7 @@ namespace Wonderland.Subsystems.ItemFlow
                 return;
             }
 
-            (int width, int height) = GridGrowth.GetIntendedSize(prefabName, template);
+            (int width, int height) = GridGrowth.GetVanillaSize(prefabName, template);
             Inventory inventory = ZdoInventoryIO.Load(containerZdo, width, height);
             if (inventory == null)
             {
@@ -179,7 +179,7 @@ namespace Wonderland.Subsystems.ItemFlow
                 // ItemData.Load never touches m_shared/m_dropPrefab - both are reference types that
                 // cannot round-trip through the byte blob, so the prefab's own template ItemDrop is
                 // the only place to get them from (m_shared is deliberately one instance shared by
-                // every item of this type, which is exactly what StackCapacity mutates in place).
+                // every item of this type).
                 ItemDrop dropTemplate = groundPrefab.GetComponent<ItemDrop>();
                 if (dropTemplate == null || dropTemplate.m_itemData?.m_shared == null)
                 {
