@@ -17,8 +17,42 @@ namespace Wonderland.Core
         public static ConfigEntry<float>? ContainerLinkRadius;
         public static ConfigEntry<string>? VacuumExcludedContainers;
         public static ConfigEntry<string>? VacuumExcludedItems;
+        public static ConfigEntry<bool>? VacuumEffectEnabled;
+        public static ConfigEntry<string>? VacuumEffectPrefab;
+        public static ConfigEntry<string>? VacuumSoundPrefab;
         public static ConfigEntry<bool>? AutoHarvestEnabled;
         public static ConfigEntry<float>? AutoHarvestRadius;
+
+        // Item flow - water buoyancy
+        public static ConfigEntry<bool>? AllItemsFloatEnabled;
+        public static ConfigEntry<float>? FloatSurfaceOffset;
+        public static ConfigEntry<float>? FloatSweepInterval;
+
+        // World governor - world rates & carry capacity
+        public static ConfigEntry<float>? CarryWeightMultiplier;
+        public static ConfigEntry<float>? StaminaRegenRateMultiplier;
+
+        // Status Effect Roster
+        public static ConfigEntry<bool>? BuffRosterEnabled;
+        public static ConfigEntry<bool>? BuffRoster_GP_Moder_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_GP_Moder_RequireBoat;
+        public static ConfigEntry<bool>? BuffRoster_Potion_hasty_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_TrinketIronStamina_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_Potion_swimmer_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_TrinketChitinSwim_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_Warm_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_Potion_stamina_lingering_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_Potion_tasty_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_Rested_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_GP_Eikthyr_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_GP_Bonemass_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_GP_TheElder_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_GP_Yagluth_Enabled;
+        public static ConfigEntry<bool>? BuffRoster_GP_Queen_Enabled;
+
+        // Heartbeat
+        public static ConfigEntry<bool>? HeartbeatEnabled;
+        public static ConfigEntry<float>? HeartbeatIntervalMinutes;
 
         // Item flow - production supply
         public static ConfigEntry<bool>? ProductionSupplyEnabled;
@@ -67,7 +101,9 @@ namespace Wonderland.Core
         // World governor - structure upkeep
         public static ConfigEntry<bool>? StructureUpkeepEnabled;
         public static ConfigEntry<float>? StructureUpkeepInterval;
-        public static ConfigEntry<int>? StructureUpkeepBatchSize;
+        public static ConfigEntry<float>? StructureUpkeepPlayerRadius;
+        public static ConfigEntry<int>? StructureUpkeepSectorsPerSweep;
+        public static ConfigEntry<bool>? StructureUpkeepPlayerBuiltOnly;
 
         // World governor - first spawn grant
         public static ConfigEntry<bool>? StarterGrantEnabled;
@@ -75,6 +111,17 @@ namespace Wonderland.Core
         public static ConfigEntry<string>? StarterBoatPrefab;
         public static ConfigEntry<float>? StarterBoatSearchRadius;
         public static ConfigEntry<bool>? StarterBoatMapPin;
+
+        // Discord Notify
+        public static ConfigEntry<bool>? DiscordNotifyEnabled;
+        public static ConfigEntry<string>? DiscordWebhookUrl;
+        public static ConfigEntry<bool>? DiscordNotifyServerStatus;
+        public static ConfigEntry<bool>? DiscordNotifyLogins;
+        public static ConfigEntry<string>? DiscordUsername;
+        public static ConfigEntry<string>? DiscordJoinMessage;
+        public static ConfigEntry<string>? DiscordLeaveMessage;
+        public static ConfigEntry<string>? DiscordServerOnlineMessage;
+        public static ConfigEntry<string>? DiscordServerOfflineMessage;
 
         // Security
         public static ConfigEntry<bool>? VitalsGuardEnabled;
@@ -90,11 +137,24 @@ namespace Wonderland.Core
         public static ConfigEntry<int>? ItemIntegritySweepBatchSize;
         public static ConfigEntry<bool>? ItemIntegritySweepCorrect;
 
+        // Discord Notify - lifecycle & world events
+        public static ConfigEntry<float>? DiscordLifecycleInterval;
+        public static ConfigEntry<bool>? DiscordNotifyDeaths;
+        public static ConfigEntry<string>? DiscordDeathMessage;
+        public static ConfigEntry<bool>? DiscordNotifyFirstJoin;
+        public static ConfigEntry<string>? DiscordFirstJoinMessage;
+        public static ConfigEntry<bool>? DiscordNotifyBossDefeats;
+        public static ConfigEntry<string>? DiscordBossDefeatMessage;
+        public static ConfigEntry<bool>? DiscordNotifyHeartbeat;
+        public static ConfigEntry<string>? DiscordHeartbeatMessage;
+
         public static void Bind(ConfigFile config, ConfigSync configSync)
         {
             ServerConfigLocked = BindSynced(config, configSync, "1 - General", "ServerConfigLocked", true, "If true, only server admins can modify synced configuration.");
             configSync.AddLockingConfigEntry(ServerConfigLocked);
             VerboseLogging = BindLocal(config, "1 - General", "VerboseLogging", true, "Enable verbose diagnostic log messages, including every item transfer the mod makes. On by default: a suspected duplication is only diagnosable if the transfer that caused it was already being logged when it happened. Security findings and ledger rejections always log regardless of this setting.");
+            HeartbeatEnabled = BindLocal(config, "1 - General", "HeartbeatEnabled", true, "Log one summary line periodically (see HeartbeatIntervalMinutes below) showing uptime and who's currently online, so an admin tailing the server log can confirm the mod is alive at a glance without needing VerboseLogging's full per-event detail. There's also a Discord version of this in section 14 (DiscordNotifyHeartbeat) - both share this same interval.");
+            HeartbeatIntervalMinutes = BindLocal(config, "1 - General", "HeartbeatIntervalMinutes", 15f, "Minutes between heartbeat summary lines (both the log one above and the optional Discord one in section 14).");
 
             VacuumEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEnabled", true, "Enable containers auto-vacuuming matching ground items nearby. Match-required: only tops up an item type a container already holds.");
             VacuumInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumInterval", 2f, "Seconds between vacuum sweep batches.", 0.5f, 30f);
@@ -103,8 +163,34 @@ namespace Wonderland.Core
             ContainerLinkRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "ContainerLinkRadius", 10f, "Radius used to find a sibling container for the capacity overflow guard.", 1f, 50f);
             VacuumExcludedContainers = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumExcludedContainers", "", "Comma-separated container prefab names to exclude from vacuuming entirely.");
             VacuumExcludedItems = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumExcludedItems", "", "Comma-separated item prefab names never to vacuum or auto-harvest.");
+            VacuumEffectEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEffectEnabled", true, "Play a visual splash at a container when it vacuums ground items into it, so the pull is visible on a completely vanilla client.");
+            VacuumEffectPrefab = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEffectPrefab", "vfx_fermenter_add", "Vanilla effect prefab to spawn at a container when it vacuums ground items (default: 'vfx_fermenter_add' for the fermenter liquid splash).");
+            VacuumSoundPrefab = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumSoundPrefab", "sfx_fermenter_add", "Vanilla sound effect prefab to spawn at a container when it vacuums ground items (default: 'sfx_fermenter_add' for the fermenter splash sound; leave empty to disable sound).");
             AutoHarvestEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AutoHarvestEnabled", true, "When a player harvests something, sweep in other ripe pickables of the same type nearby.");
             AutoHarvestRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AutoHarvestRadius", 8f, "Radius around the triggering pickable (and around each player, for trigger detection) to sweep.", 1f, 30f);
+            AllItemsFloatEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AllItemsFloatEnabled", true, "Force all dropped items (metals, ores, armor, weapons, serpent scales) to float on water, completely server-side. Vanilla clients see them bobbing on the water surface and can collect them from boats or while swimming.");
+            FloatSurfaceOffset = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "FloatSurfaceOffset", -0.25f, "Elevation offset relative to water level where floating items rest (-0.25 places items naturally half-submerged in the waterline).", -2f, 2f);
+            FloatSweepInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "FloatSweepInterval", 0.3f, "Seconds between water buoyancy scans around connected players.", 0.1f, 10f);
+
+            CarryWeightMultiplier = BindSynced(config, configSync, "15 - World Modifiers & Capacity", "CarryWeightMultiplier", 2.0f, "Adjusts player max carry weight via Valheim's native world modifier rate. Completely server-side - vanilla clients display the new limit in their UI and auto-pickup up to this capacity with no client mods. 1.0 = vanilla default (300 base, 450 with Megingjord); 1.5 = 450 base, 675 with belt; 2.0 = 600 base, 900 with belt; 3.0 = 900 base, 1350 with belt.", 0.5f, 10f);
+            StaminaRegenRateMultiplier = BindSynced(config, configSync, "15 - World Modifiers & Capacity", "StaminaRegenRateMultiplier", 3.0f, "How fast every player's stamina regenerates, server-wide. 1.0 = vanilla default; 3.0 (default here) = three times as fast. Uses Valheim's own native world-rate system (same mechanism as CarryWeightMultiplier above) - vanilla clients apply it automatically, no client mod needed. NOTE: if you also turn on a Status Effect Roster entry that boosts stamina regen (section 16), the two MULTIPLY together rather than add - e.g. this at 3.0x plus a roster effect worth +100% regen yields 6x total, not 4x.", 0.1f, 10f);
+
+            BuffRosterEnabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRosterEnabled", true, "Turns the whole Status Effect Roster on or off. When on, Wonderland automatically gives every connected player a chosen set of real potion/buff effects from the game (pick which ones below) and keeps them active permanently - like drinking a potion that never runs out, with nothing to install on the player's end. Turn individual effects on or off with the settings below this one; this is just the master switch for all of them. One limitation worth knowing: the game gives this mod no way to cancel an effect early once it's granted, so turning an effect off here means it stops being renewed and fades out naturally over its own duration, rather than disappearing instantly.");
+            BuffRoster_GP_Moder_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_GP_Moder_Enabled", true, "Gives players the Moder boss-power buff: +10% run speed, +300 extra carry weight, and resistance to frost damage. This is a real effect that already exists in the game (normally earned by beating the Moder boss) - this setting just gives it to everyone for free, automatically. Live-confirmed working with RequireBoat below (2026-09-11): grants the instant you take a ship's wheel, including after getting off and back on the same or a different ship.");
+            BuffRoster_GP_Moder_RequireBoat = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_GP_Moder_RequireBoat", true, "If on (the default), the Moder buff above only applies while a player is ACTIVELY STEERING a ship - hands on the wheel, not just standing on deck - matching what that power is really for in vanilla (sailing against the wind). Read directly off the ship's own steering-user field, the same signal the game itself uses to know who's driving. Live-confirmed 2026-09-11: grants immediately on taking the wheel, and grants again immediately on re-taking it (same ship or a different one) after letting go, even if the previous grant had barely started its own re-up cycle. If off, everyone gets the buff constantly, on land or at sea. 'Gone' after letting go still means fading over the effect's own duration, not an instant cutoff - see the note on BuffRosterEnabled above about why.");
+            BuffRoster_Potion_hasty_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_Potion_hasty_Enabled", true, "Gives every player the Tonic of Ratatosk potion effect: +15% run speed plus a temporary skill boost. Real vanilla potion, just never wearing off.");
+            BuffRoster_TrinketIronStamina_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_TrinketIronStamina_Enabled", true, "Gives players another +15% run speed, from a different vanilla trinket effect. With all three run-speed buffs on by default (this one plus Moder and Tonic of Ratatosk above), players get +40% run speed total - that's the most this mod can give, since there's no bigger speed effect anywhere in the game to grant.");
+            BuffRoster_Potion_swimmer_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_Potion_swimmer_Enabled", true, "Cuts stamina cost while swimming in half - and ONLY while swimming, running and jumping cost the same as normal.");
+            BuffRoster_TrinketChitinSwim_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_TrinketChitinSwim_Enabled", true, "Cuts stamina cost while swimming by 80% (swimming only, same as the setting above) and makes players swim 50% faster. The strongest swim buff this mod can grant. Stacks with the setting above for even cheaper swimming.");
+            BuffRoster_Warm_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_Warm_Enabled", false, "Doubles stamina and eitr regeneration for every player, permanently. Off by default - if you also turn on StaminaRegenRateMultiplier above, the two multiply together rather than add, so combining them gives a bigger boost than you might expect (see that setting's description for the exact math).");
+            BuffRoster_Potion_stamina_lingering_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_Potion_stamina_lingering_Enabled", false, "Boosts stamina regen by 25% for every player. Off by default - same stacking caution as Warm above if you also use StaminaRegenRateMultiplier.");
+            BuffRoster_Potion_tasty_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_Potion_tasty_Enabled", false, "Doubles stamina regen for every player. Off by default - same stacking caution as Warm above. Also the chattiest effect in this list behind the scenes: this particular vanilla effect naturally wears off in just 10 seconds, so keeping it active means re-applying it roughly every 4 seconds per player - harmless, just worth knowing if you're watching server logs closely.");
+            BuffRoster_Rested_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_Rested_Enabled", false, "Gives every player the same buff you get from resting at a campfire: better health/stamina/eitr regen and faster skill gain, permanently. Off by default - same stacking caution as Warm above with StaminaRegenRateMultiplier, and this is the single chattiest effect in the roster behind the scenes (it naturally wears off after 1 second in vanilla, so it needs constant re-applying to stay active) - harmless, just the busiest one.");
+            BuffRoster_GP_Eikthyr_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_GP_Eikthyr_Enabled", false, "Gives every player Eikthyr's boss power: stamina costs for running, jumping, AND swimming all cut by 60% at once (compare to the Swimmer effects above, which only touch swimming). Off by default.");
+            BuffRoster_GP_Bonemass_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_GP_Bonemass_Enabled", false, "Gives every player Bonemass's boss power: free blocking (no stamina cost) plus some real resistance to physical damage (blunt/slash/pierce). Off by default.");
+            BuffRoster_GP_TheElder_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_GP_TheElder_Enabled", false, "Gives every player The Elder's boss power: 30% faster health regen, plus extra damage dealt when chopping wood or mining with a pickaxe. Off by default.");
+            BuffRoster_GP_Yagluth_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_GP_Yagluth_Enabled", false, "Gives every player Yagluth's boss power: a farming skill boost, 10% extra damage with every weapon type, and lightning resistance. Off by default.");
+            BuffRoster_GP_Queen_Enabled = BindSynced(config, configSync, "16 - Status Effect Roster", "BuffRoster_GP_Queen_Enabled", false, "Gives every player The Queen's boss power: free sneaking (no stamina cost), doubled eitr regen, and poison resistance. Off by default.");
 
             ProductionSupplyEnabled = BindSynced(config, configSync, "3 - Production Supply", "ProductionSupplyEnabled", true, "Auto-feed fuel and ore/process material to fireplaces and smelters from linked containers, even with nobody online.");
             ProductionSupplyInterval = BindSynced(config, configSync, "3 - Production Supply", "ProductionSupplyInterval", 3f, "Seconds between production supply sweep batches.", 0.5f, 30f);
@@ -135,20 +221,32 @@ namespace Wonderland.Core
             RaidBlockedEvents = BindSynced(config, configSync, "6 - Raids", "RaidBlockedEvents", "seeker,charred,fulling,gjall", "Comma-separated case-insensitive substrings matched against the raid event name.");
 
             NightSpawnBlockEnabled = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockEnabled", true, "Destroy configured hostile creature spawns the instant the server learns about them at night in configured biomes.");
-            NightSpawnBlockedBiomes = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedBiomes", "Meadows,BlackForest", "Comma-separated Heightmap.Biome names.");
-            NightSpawnBlockedCreatures = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedCreatures", "Draugr,Draugr_Elite,Wraith,Abomination,Deathsquito,Blob,BlobElite,StoneGolem", "Comma-separated exact creature prefab names to block.");
+            NightSpawnBlockedBiomes = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedBiomes", "Meadows,BlackForest,Mistlands,AshLands,Plains", "Which biomes night-spawn blocking applies in (comma-separated: Meadows, BlackForest, Swamp, Mountain, Plains, Mistlands, AshLands, DeepNorth, Ocean). A creature only gets blocked if it's BOTH on the creature list below AND spawns in one of these biomes - so if you add a new creature below and it still isn't being blocked, check that its biome is listed here too. Mistlands/AshLands/Plains are already included by default to cover the Seeker, Charred, and Fenring creatures below.");
+            NightSpawnBlockedCreatures = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedCreatures", "Draugr,Draugr_Elite,Wraith,Abomination,Deathsquito,Blob,BlobElite,StoneGolem,Seeker,SeekerBrood,SeekerBrute,SeekerQueen,Charred_Archer,Charred_Archer_Fader,Charred_Mage,Charred_Melee,Charred_Melee_Dyrnwyn,Charred_Melee_Fader,Charred_Twitcher,Charred_Twitcher_Summoned,Fenring,Fenring_Cultist,Fenring_Cultist_Hildir,Fenring_Cultist_Hildir_nochest", "Which creatures get destroyed if they spawn at night (comma-separated, exact in-game names - typos just mean that entry silently does nothing). Covers the Draugr/Wraith/Abomination/Blob/Stone Golem family by default, plus the full Seeker family (Mistlands), the full Charred family (AshLands), and the full Fenring family (Hildir's camps) - add or remove names freely. Remember: the biome list above also has to include wherever a creature actually spawns, or blocking it here won't do anything.");
 
             MaxPlayerCount = BindSyncedInt(config, configSync, "8 - Player Cap", "MaxPlayerCount", 10, "Maximum concurrent connected players. Vanilla hardcodes 10; this can raise or lower it. On a crossplay (-crossplay) server, PlayFab's own lobby registration is separately hardcoded to 10 and cannot be raised by this or any mod - Steam-direct joins can exceed 10, but PlayFab/Xbox joins past the 10th are still rejected by PlayFab itself. A startup log warning appears if this is set above 10 while crossplay is active.", 1, 256);
 
             StructureUpkeepEnabled = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepEnabled", true, "Periodically reset building piece health back to max, preventing decay.");
             StructureUpkeepInterval = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepInterval", 60f, "Seconds between structure upkeep sweep batches.", 5f, 600f);
-            StructureUpkeepBatchSize = BindSyncedInt(config, configSync, "9 - Structure Upkeep", "StructureUpkeepBatchSize", 50, "How many WearNTear ZDOs to advance the scanner by per sweep.", 1, 2000);
+            StructureUpkeepPlayerRadius = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepPlayerRadius", 128f, "Metres around each connected player checked for damaged pieces every sweep. Decay only ever happens inside a client's active area (a 1.5-zone box, up to ~128m from the player), so this pass is what actually keeps up with wear; the default covers that whole envelope.", 16f, 512f);
+            StructureUpkeepSectorsPerSweep = BindSyncedInt(config, configSync, "9 - Structure Upkeep", "StructureUpkeepSectorsPerSweep", 512, "How many populated 64m sectors the background full-map sweep walks per sweep interval. This is the slow backstop for damage that predates the feature or happened in an unvisited zone; the per-player pass above does the real-time work. (Replaces StructureUpkeepBatchSize, whose unit was different.)", 1, 20000);
+            StructureUpkeepPlayerBuiltOnly = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepPlayerBuiltOnly", true, "Only repair pieces a player placed (the piece has a creator). World-generated ruins are spawned deliberately pre-damaged; turning this off will gradually restore every abandoned village and dungeon on the map to pristine.");
 
             StarterGrantEnabled = BindSynced(config, configSync, "10 - Starter Grant", "StarterGrantEnabled", true, "Grant a one-time starter kit and boat the first time a character is seen in this world. Recorded as a world global key per character (wonderland_starter_<playerID>), saved with the world.");
             StarterKitItems = BindSynced(config, configSync, "10 - Starter Grant", "StarterKitItems", "Wood:50,Stone:10,Flint:5,AxeFlint:1,KnifeFlint:1,SpearFlint:1,PickaxeAntler:1", "Comma-separated PrefabName:Amount pairs spawned as ground items at spawn.");
             StarterBoatPrefab = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatPrefab", "Karve", "Vanilla hull prefab name granted (e.g. Raft, Karve, VikingShip).");
             StarterBoatSearchRadius = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatSearchRadius", 200f, "Radius to search for water near spawn to place the boat in. The search always starts at the shoreline nearest the player and works outward, so this is a ceiling, not a target.", 20f, 1500f);
             StarterBoatMapPin = BindSynced(config, configSync, "10 - Starter Grant", "StarterBoatMapPin", true, "Send a vanilla map pin discovery to the player's map marking the starter boat.");
+
+            DiscordNotifyEnabled = BindLocal(config, "14 - Discord Notify", "DiscordNotifyEnabled", true, "Master switch for Discord webhook announcements. Has no effect until DiscordWebhookUrl is set.");
+            DiscordWebhookUrl = BindLocal(config, "14 - Discord Notify", "DiscordWebhookUrl", "", "Discord webhook URL to post announcements to (Server Settings -> Integrations -> Webhooks in Discord). Local to this server only - never synced to clients, unlike most settings above.");
+            DiscordNotifyServerStatus = BindLocal(config, "14 - Discord Notify", "DiscordNotifyServerStatus", true, "Announce when the server comes online (world finished loading) and when it shuts down.");
+            DiscordNotifyLogins = BindLocal(config, "14 - Discord Notify", "DiscordNotifyLogins", true, "Announce when a player connects or disconnects.");
+            DiscordUsername = BindLocal(config, "14 - Discord Notify", "DiscordUsername", "Wonderland", "Display name the webhook posts under in Discord. Empty uses the webhook's own configured name.");
+            DiscordJoinMessage = BindLocal(config, "14 - Discord Notify", "DiscordJoinMessage", "🟢 **{player}** joined the server", "Message posted when a player connects. {player} is replaced with their name.");
+            DiscordLeaveMessage = BindLocal(config, "14 - Discord Notify", "DiscordLeaveMessage", "🔴 **{player}** left the server", "Message posted when a player disconnects. {player} is replaced with their name.");
+            DiscordServerOnlineMessage = BindLocal(config, "14 - Discord Notify", "DiscordServerOnlineMessage", "🟢 **{world}** server is online", "Message posted once the world has finished loading. {world} is replaced with the world name.");
+            DiscordServerOfflineMessage = BindLocal(config, "14 - Discord Notify", "DiscordServerOfflineMessage", "🔴 **{world}** server is offline", "Message posted on shutdown. {world} is replaced with the world name.");
 
             VitalsGuardEnabled = BindSynced(config, configSync, "12 - Security", "VitalsGuardEnabled", true, "Flag max HP above a configured ceiling and implausible current stamina. Detect-only: neither can be corrected from the server - the owning client rewrites both every second and discards stale server writes while moving.");
             VitalsGuardInterval = BindSynced(config, configSync, "12 - Security", "VitalsGuardInterval", 5f, "Seconds between vitals checks.", 1f, 60f);
@@ -162,6 +260,16 @@ namespace Wonderland.Core
             ItemIntegritySweepInterval = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepInterval", 30f, "Seconds between integrity sweep batches.", 5f, 600f);
             ItemIntegritySweepBatchSize = BindSyncedInt(config, configSync, "12 - Security", "ItemIntegritySweepBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
             ItemIntegritySweepCorrect = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepCorrect", false, "If true, remove implausible items outright instead of only logging them.");
+
+            DiscordLifecycleInterval = BindLocal(config, "14 - Discord Notify", "DiscordLifecycleInterval", 3f, "Seconds between the sweep that detects player deaths and first-time joins.");
+            DiscordNotifyDeaths = BindLocal(config, "14 - Discord Notify", "DiscordNotifyDeaths", true, "Post in Discord whenever a connected player dies.");
+            DiscordDeathMessage = BindLocal(config, "14 - Discord Notify", "DiscordDeathMessage", "\U0001F480 **{player}** died", "Message posted when a player dies. {player} is replaced with their name.");
+            DiscordNotifyFirstJoin = BindLocal(config, "14 - Discord Notify", "DiscordNotifyFirstJoin", true, "Post a welcome message in Discord the first time a new character ever joins this world. Works even if Starter Grant (section 10) is turned off - this is tracked separately.");
+            DiscordFirstJoinMessage = BindLocal(config, "14 - Discord Notify", "DiscordFirstJoinMessage", "\U0001F389 **{player}** joined {world} for the first time - welcome!", "Message posted the first time a character joins. {player} and {world} are replaced.");
+            DiscordNotifyBossDefeats = BindLocal(config, "14 - Discord Notify", "DiscordNotifyBossDefeats", true, "Post in Discord when one of the five classic bosses (Eikthyr, The Elder, Bonemass, Moder, Yagluth) is defeated for the first time. Only fires once per boss per world - restarting the server won't re-post it.");
+            DiscordNotifyHeartbeat = BindLocal(config, "14 - Discord Notify", "DiscordNotifyHeartbeat", false, "Post a periodic 'server is alive' status update in Discord, showing uptime and who's currently online - handy for a community to check who's playing without opening the game. Uses the same timer as the log-only heartbeat in section 1 (HeartbeatIntervalMinutes). Off by default since posting to a channel every 15 minutes adds up over a day - turn on if your community wants it, and raise the interval in section 1 if once every 15 minutes is too chatty for your channel.");
+            DiscordHeartbeatMessage = BindLocal(config, "14 - Discord Notify", "DiscordHeartbeatMessage", "\U0001F49A **{world}** heartbeat - up {uptime} | {playercount} player(s) online: {players}", "Message posted for the Discord heartbeat above. Placeholders: {world}, {uptime}, {playercount} (a number), {players} (comma-separated names, or 'none' if nobody's online).");
+            DiscordBossDefeatMessage = BindLocal(config, "14 - Discord Notify", "DiscordBossDefeatMessage", "⚔️ **{boss}** has been defeated on {world}!", "Message posted when a boss is defeated. {boss} and {world} are replaced.");
 
             MigrateLegacyConfig(config);
         }

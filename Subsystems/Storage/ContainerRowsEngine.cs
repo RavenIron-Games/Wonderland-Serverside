@@ -17,6 +17,16 @@ namespace Wonderland.Subsystems.Storage
     /// </summary>
     public static class ContainerRowsEngine
     {
+        /// <summary>
+        /// How long a resolved eligible set is trusted before being rebuilt from scratch. Not
+        /// event-driven off ContainerRowsExcludedContainers.SettingChanged (nothing else in this mod
+        /// reacts to config edits that way - every engine here is poll-based by design, see
+        /// GridGrowth's header) - a periodic rebuild is cheap (one pass over the container-prefab list,
+        /// no ZDO I/O) and means an admin's exclusion-list edit takes effect within a minute instead of
+        /// needing a restart.
+        /// </summary>
+        private const float ReannounceInterval = 60f;
+
         private static ZdoSpatialQuery.PrefabSetScanner? _scanner;
         private static float _timer;
         private static readonly List<ZDO> _buffer = new List<ZDO>();
@@ -24,14 +34,16 @@ namespace Wonderland.Subsystems.Storage
 
         private static bool _announced;
         private static float _unresolvedFor;
+        private static float _reannounceTimer;
 
         public static void Initialize()
         {
             ContainerRows.ResetCache();
-            _scanner = new ZdoSpatialQuery.PrefabSetScanner(ContainerRegistry.PrefabNames);
+            _scanner = null;
             _anchoredTotal = 0;
             _announced = false;
             _unresolvedFor = 0f;
+            _reannounceTimer = 0f;
 
             if (!ContainerRows.IsEnabled)
             {
@@ -40,14 +52,29 @@ namespace Wonderland.Subsystems.Storage
         }
 
         /// <summary>
-        /// Logs the eligible set once the build tables can be read. Returns false until then, so no
-        /// sweep runs against an unresolved eligibility set.
+        /// Builds (and periodically rebuilds) the scanner from just the eligible - player-buildable,
+        /// not excluded - container prefab names, rather than every container-bearing prefab in the
+        /// game (dungeon pots, tar pits, cargo crates, every TreasureChest_* variant: 30-50+ types on a
+        /// stock install, none of which can ever grow). PrefabSetScanner round-robins by PREFAB TYPE,
+        /// not by ZDO, so scanning that whole list was spending most of the sweep budget on container
+        /// types that always fail IsEligible in Visit() anyway - which is what made a specific player
+        /// chest's turn arrive so unpredictably (the exact "expands at random" complaint this exists to
+        /// fix). Returns false until the build tables can be read, so no sweep runs against an
+        /// unresolved eligibility set.
         /// </summary>
         private static bool Announce(float dt)
         {
             if (_announced)
             {
-                return true;
+                // Clamped: a live boot showed Unity's deltaTime can spike well past 60s on the first
+                // tick after ZNetScene's synchronous world-load stall, which otherwise fires a spurious
+                // reannounce (and its log line) within seconds of the real one.
+                _reannounceTimer += Mathf.Min(dt, 5f);
+                if (_reannounceTimer < ReannounceInterval)
+                {
+                    return true;
+                }
+                _reannounceTimer = 0f;
             }
             if (!ContainerRows.TryResolveBuildable())
             {
@@ -60,25 +87,41 @@ namespace Wonderland.Subsystems.Storage
                 return false;
             }
 
-            var eligible = new List<string>();
+            bool firstAnnounce = !_announced;
+            var eligibleNames = new List<string>();
+            var logEntries = new List<string>();
             foreach (string name in ContainerRegistry.PrefabNames)
             {
                 GameObject prefab = ZNetScene.instance.GetPrefab(name);
-                Container template = prefab != null ? prefab.GetComponent<Container>() : null;
+                Container template = ContainerRegistry.ResolveTemplate(prefab);
                 if (template != null && ContainerRows.IsEligible(prefab, template))
                 {
-                    (int w, int h) = ContainerRows.GetGridSize(prefab, template);
-                    eligible.Add($"{name} {template.m_width}x{template.m_height}->{w}x{h}");
+                    eligibleNames.Add(name);
+                    if (firstAnnounce)
+                    {
+                        (int w, int h) = ContainerRows.GetGridSize(prefab, template);
+                        logEntries.Add($"{name} {template.m_width}x{template.m_height}->{w}x{h}");
+                    }
                 }
             }
-            WonderlandDebug.LogAlways($"[ContainerRows] x{ContainerRows.Multiplier:0.##} rows on {eligible.Count} of {ContainerRegistry.PrefabNames.Count} container type(s) (player-buildable only): {string.Join(", ", eligible)}");
+            _scanner = new ZdoSpatialQuery.PrefabSetScanner(eligibleNames);
+
+            string summary = $"[ContainerRows] x{ContainerRows.Multiplier:0.##} rows on {eligibleNames.Count} of {ContainerRegistry.PrefabNames.Count} container type(s) (player-buildable only, includes ship cargo): {string.Join(", ", logEntries)}";
+            if (firstAnnounce)
+            {
+                WonderlandDebug.LogAlways(summary);
+            }
+            else
+            {
+                WonderlandDebug.LogInfo($"[ContainerRows] eligible set refreshed ({eligibleNames.Count} type(s)) - ContainerRowsExcludedContainers may have changed.");
+            }
             _announced = true;
             return true;
         }
 
         public static void OnUpdate(float dt)
         {
-            if (_scanner == null || !ContainerRows.IsEnabled || !Announce(dt))
+            if (!ContainerRows.IsEnabled || !Announce(dt) || _scanner == null)
             {
                 return;
             }
@@ -110,7 +153,7 @@ namespace Wonderland.Subsystems.Storage
                 return;
             }
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
-            Container template = prefab != null ? prefab.GetComponent<Container>() : null;
+            Container template = ContainerRegistry.ResolveTemplate(prefab);
             if (template == null || !ContainerRows.IsEligible(prefab, template))
             {
                 return;

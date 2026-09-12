@@ -119,5 +119,74 @@ namespace Wonderland.Core.Data
                 }
             }
         }
+
+        /// <summary>
+        /// One resumable walk of ZDOMan's whole sector array that matches every ZDO against a SET of
+        /// prefab hashes in a single pass. PrefabSetScanner above leans on vanilla's
+        /// GetAllZDOsWithPrefabIterative, which only takes ONE prefab name and re-walks all
+        /// m_width*m_width (512*512 = 262144) sector slots for each - fine for the dozen-odd container
+        /// prefabs the item-flow engines track, ruinous for the ~800 WearNTear-bearing prefabs
+        /// StructureUpkeep tracks (a single full cycle ran to hours). A HashSet lookup during one walk
+        /// collapses that to one pass regardless of set size. This does read the publicised
+        /// ZDOMan.m_objectsBySector directly; the loop is a straight copy of vanilla's own traversal
+        /// with the per-sector budget counted the same way (non-empty sectors only), minus vanilla's
+        /// quirk of re-scanning the sector it broke on.
+        /// </summary>
+        public sealed class PrefabSetSweeper
+        {
+            private readonly HashSet<int> _prefabHashes;
+            private int _sectorCursor;
+
+            public PrefabSetSweeper(IEnumerable<int> prefabHashes)
+            {
+                _prefabHashes = new HashSet<int>(prefabHashes);
+            }
+
+            public int TrackedPrefabCount => _prefabHashes.Count;
+
+            /// <summary>
+            /// Walks up to <paramref name="sectorBudget"/> NON-EMPTY sectors from where the last call
+            /// stopped, appending matches to <paramref name="results"/> (not cleared first). Returns
+            /// true when the cursor ran off the end of the array - a full map pass completed - and
+            /// has been reset to 0 for the next call.
+            /// </summary>
+            public bool Advance(int sectorBudget, List<ZDO> results)
+            {
+                if (_prefabHashes.Count == 0 || ZDOMan.instance == null)
+                {
+                    return false;
+                }
+                List<ZDO>[] sectors = ZDOMan.instance.m_objectsBySector;
+                if (sectors == null)
+                {
+                    return false;
+                }
+
+                int visited = 0;
+                while (_sectorCursor < sectors.Length)
+                {
+                    List<ZDO> sector = sectors[_sectorCursor];
+                    _sectorCursor++;
+                    if (sector == null)
+                    {
+                        continue;
+                    }
+                    for (int i = 0; i < sector.Count; i++)
+                    {
+                        ZDO zdo = sector[i];
+                        if (zdo != null && zdo.IsValid() && _prefabHashes.Contains(zdo.GetPrefab()))
+                        {
+                            results.Add(zdo);
+                        }
+                    }
+                    if (++visited >= sectorBudget)
+                    {
+                        return false;
+                    }
+                }
+                _sectorCursor = 0;
+                return true;
+            }
+        }
     }
 }

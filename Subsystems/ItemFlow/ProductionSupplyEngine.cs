@@ -283,7 +283,7 @@ namespace Wonderland.Subsystems.ItemFlow
             foreach (ZDO containerZdo in ZdoSpatialQuery.FindNear(position, range))
             {
                 GameObject prefab = ZNetScene.instance.GetPrefab(containerZdo.GetPrefab());
-                Container template = prefab != null ? prefab.GetComponent<Container>() : null;
+                Container template = ContainerRegistry.ResolveTemplate(prefab);
                 if (template == null || ZdoInventoryIO.IsBusy(containerZdo))
                 {
                     continue;

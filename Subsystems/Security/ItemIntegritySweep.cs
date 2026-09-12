@@ -67,7 +67,7 @@ namespace Wonderland.Subsystems.Security
                 return;
             }
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
-            Container template = prefab != null ? prefab.GetComponent<Container>() : null;
+            Container template = ContainerRegistry.ResolveTemplate(prefab);
             if (template == null)
             {
                 return;

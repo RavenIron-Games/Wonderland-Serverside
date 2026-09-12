@@ -163,7 +163,7 @@ namespace Wonderland.Subsystems.Storage
                     continue;
                 }
                 GameObject candidatePrefab = ZNetScene.instance.GetPrefab(candidate.GetPrefab());
-                Container candidateTemplate = candidatePrefab != null ? candidatePrefab.GetComponent<Container>() : null;
+                Container candidateTemplate = ContainerRegistry.ResolveTemplate(candidatePrefab);
                 if (candidateTemplate == null)
                 {
                     continue;

@@ -86,7 +86,7 @@ namespace Wonderland.Subsystems.ItemFlow
 
             int prefabHash = containerZdo.GetPrefab();
             GameObject prefab = ZNetScene.instance.GetPrefab(prefabHash);
-            Container template = prefab != null ? prefab.GetComponent<Container>() : null;
+            Container template = ContainerRegistry.ResolveTemplate(prefab);
             if (template == null)
             {
                 return;
@@ -121,9 +121,11 @@ namespace Wonderland.Subsystems.ItemFlow
             // Try draining any previously overflowed items from ItemCache into this container
             changed |= ItemCache.TryDrainInto(containerZdo, inventory);
 
+            bool vacuumed = false;
             if (inventory.NrOfItems() > 0)
             {
-                changed |= VacuumGroundItemsInto(containerZdo, inventory, prefabHash);
+                vacuumed = VacuumGroundItemsInto(containerZdo, inventory, prefabHash);
+                changed |= vacuumed;
             }
 
             if (changed && ContainerRows.IsEnabled && ContainerRows.IsEligible(prefab, template))
@@ -137,7 +139,86 @@ namespace Wonderland.Subsystems.ItemFlow
                 ZdoInventoryIO.Save(containerZdo, inventory);
             }
 
+            if (vacuumed)
+            {
+                PlayVacuumEffect(containerZdo.GetPosition());
+            }
+
             FlushPendingGroundDestroy();
+        }
+
+        // === Visual & Audio feedback ===
+
+        /// <summary>
+        /// Spawns vanilla's fermenter liquid splash (vfx_fermenter_add) and splash sound (sfx_fermenter_add)
+        /// at the container via Valheim's built-in "SpawnObject" routed RPC.
+        ///
+        /// Dedicated-server fact: Calling Object.Instantiate on a dedicated server does not broadcast
+        /// non-persistent prefabs to clients (and the server is headless). Valheim's native ZNetScene.RPC_SpawnObject
+        /// ("SpawnObject") is registered on EVERY client out of the box. Broadcasting it directly to connected
+        /// peers within audible/visible range (80m) ensures the vanilla client executes Object.Instantiate locally,
+        /// playing the particle splash and audio cleanly with zero server overhead and 100% vanilla compatibility.
+        /// </summary>
+        private static void PlayVacuumEffect(Vector3 position)
+        {
+            if (WonderlandConfig.VacuumEffectEnabled?.Value != true)
+            {
+                return;
+            }
+            if (ZNet.instance == null || ZRoutedRpc.instance == null)
+            {
+                return;
+            }
+
+            string vfxName = WonderlandConfig.VacuumEffectPrefab?.Value ?? "vfx_fermenter_add";
+            string sfxName = WonderlandConfig.VacuumSoundPrefab?.Value ?? "sfx_fermenter_add";
+
+            int vfxHash = !string.IsNullOrEmpty(vfxName) ? vfxName.GetStableHashCode() : 0;
+            int sfxHash = !string.IsNullOrEmpty(sfxName) ? sfxName.GetStableHashCode() : 0;
+
+            if (vfxHash == 0 && sfxHash == 0)
+            {
+                return;
+            }
+
+            Vector3 spawnPos = position + Vector3.up * 0.5f;
+            Quaternion rot = Quaternion.identity;
+            const float maxAudibleDistance = 80f;
+
+            // Broadcast to connected vanilla clients near the container
+            List<ZNetPeer> peers = ZNet.instance.GetPeers();
+            if (peers != null)
+            {
+                for (int i = 0; i < peers.Count; i++)
+                {
+                    ZNetPeer peer = peers[i];
+                    if (peer != null && peer.IsReady() && Vector3.Distance(peer.GetRefPos(), spawnPos) <= maxAudibleDistance)
+                    {
+                        if (vfxHash != 0)
+                        {
+                            ZRoutedRpc.instance.InvokeRoutedRPC(peer.m_uid, "SpawnObject", spawnPos, rot, vfxHash);
+                        }
+                        if (sfxHash != 0)
+                        {
+                            ZRoutedRpc.instance.InvokeRoutedRPC(peer.m_uid, "SpawnObject", spawnPos, rot, sfxHash);
+                        }
+                    }
+                }
+            }
+
+            // If non-dedicated host (player running local listen server), also invoke for local player
+            if (!ZNet.instance.IsDedicated() && Vector3.Distance(ZNet.instance.GetReferencePosition(), spawnPos) <= maxAudibleDistance)
+            {
+                long myId = ZNet.GetUID();
+                if (vfxHash != 0)
+                {
+                    ZRoutedRpc.instance.InvokeRoutedRPC(myId, "SpawnObject", spawnPos, rot, vfxHash);
+                }
+                if (sfxHash != 0)
+                {
+                    ZRoutedRpc.instance.InvokeRoutedRPC(myId, "SpawnObject", spawnPos, rot, sfxHash);
+                }
+            }
         }
 
         /// <summary>

@@ -1,8 +1,8 @@
 {
     "name": "Wonderland",
-    "version_number": "0.4.0",
+    "version_number": "0.7.2",
     "website_url": "https://ravenirongames.com/",
-    "description": "Strictly server-side Valheim mod - made for 1.0- no client install ever needed. Smart item automation, capacity growth, starter grants, and anti-cheat - full PlayFab/Xbox/crossplay support.",
+    "description": "Strictly server-side Valheim 1.0 mod: automation, world governance, and status effects - vacuum, production supply, container growth, carry/stamina rates, raid/spawn control, and more. Zero client install, full PlayFab/Xbox/crossplay. See README.",
     "dependencies": [
         "denikson-BepInExPack_Valheim-5.4.2350"
     ]

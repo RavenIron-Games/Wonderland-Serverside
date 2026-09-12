@@ -14,6 +14,7 @@ namespace Wonderland.Subsystems.ItemFlow
 
         public void Initialize(ConfigFile config, ConfigSync configSync, Harmony harmony)
         {
+            WaterBuoyancyEngine.Initialize(harmony);
         }
 
         public void OnWorldReady()
@@ -23,6 +24,7 @@ namespace Wonderland.Subsystems.ItemFlow
             ProductionSupplyEngine.Initialize();
             SupplySwitch.Initialize();
             SortEngine.Initialize();
+            WaterBuoyancyEngine.OnWorldReady();
         }
 
         public void OnUpdate()
@@ -33,6 +35,7 @@ namespace Wonderland.Subsystems.ItemFlow
             ProductionSupplyEngine.OnUpdate(dt);
             SupplySwitch.OnUpdate(dt);
             SortEngine.OnUpdate(dt);
+            WaterBuoyancyEngine.OnUpdate(dt);
         }
 
         public void Shutdown()

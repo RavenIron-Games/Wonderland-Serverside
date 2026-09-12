@@ -1,5 +1,279 @@
 # Changelog
 
+## 0.7.2
+
+### Added
+- **Status Effect Roster.** A curated, config-driven set of EXISTING vanilla status effects (potions, trinket
+  effects, guardian powers) can be kept active on every connected player, entirely server-side: `SEMan.AddStatusEffect`'s
+  non-owner path is a routed RPC the client executes with its own already-loaded copy of the named asset, the same
+  wire pattern already used for HUD toasts - no client mod, ever. Distinct effects stack additively and a
+  server-triggered grant bypasses vanilla's "one potion effect per category" rule, so several roster slots combine
+  freely. There is no removal RPC, so disabling a slot means "stop renewing it," not an instant revoke. New config
+  section `16 - Status Effect Roster`, 14 slots total:
+  - On by default: `GP_Moder`, `Potion_hasty`, `TrinketIronStamina` (+40% run speed combined while actively steering
+    a ship, +30% on land - the honest ceiling from every positive vanilla speed asset that exists), `Potion_swimmer`,
+    `TrinketChitinSwim` (swim-stamina cost cut way down, swim-only).
+  - `GP_Moder` specifically only applies while actively steering a ship (`BuffRoster_GP_Moder_RequireBoat`, on by
+    default) - matches what that guardian power is really for in vanilla (sailing against the wind) rather than an
+    always-on speed buff. Detected via the ship's own steering-user ZDO field (`ZDOVars.s_user`), the same one the
+    game itself sets the instant you take the wheel and clears the instant you let go - **live-confirmed working**,
+    including re-granting correctly after letting go and re-taking the wheel on the same or a different ship.
+  - Off by default (opt-in): `Warm`, `Potion_stamina_lingering`, `Potion_tasty` (stamina/eitr regen boosts - stack
+    *multiplicatively* with `StaminaRegenRateMultiplier` below if both are used, see that setting's description),
+    `Rested` (health/stamina/eitr regen + faster skill gain, permanently), and four more boss guardian powers -
+    `GP_Eikthyr` (-60% run/jump/swim stamina), `GP_Bonemass` (free blocking + physical resistance), `GP_TheElder`
+    (+health regen + more chop/pickaxe damage), `GP_Yagluth` (+damage, lightning resistant), `GP_Queen` (free
+    sneaking + eitr regen x2).
+- **Native stamina regen rate.** `StaminaRegenRateMultiplier` (default 3.0x) drives Valheim's own
+  `GlobalKeys.StaminaRegenRate` world modifier - the same proven, zero-client-install mechanism already shipping as
+  `CarryWeightMultiplier`. Compounds multiplicatively (not additively) with any Status Effect Roster entry that also
+  touches stamina regen - see the setting's own description for the concrete math.
+- **Config hot-reload.** The `.cfg` file is polled every 5 seconds; an on-disk edit is picked up and applied without
+  a server restart, the same live-tested pattern already proven on this testbed by the sibling GetOffMyLawn mod.
+- **Discord: deaths, first-time joins, boss defeats, and an optional heartbeat.** Four new independent
+  announcements, all detected from server-visible state alone: a death (the character ZDO's own `s_dead` flag
+  flipping false->true), a character's first time ever connecting to this world (its own tracking key, independent
+  of `StarterGrantEnabled`), any of the five classic bosses being defeated for the first time (Eikthyr, The Elder,
+  Bonemass, Moder, Yagluth - read from the same native world global keys the game itself sets, never re-announced on
+  a later restart), and an optional periodic heartbeat post showing uptime and who's currently online
+  (`DiscordNotifyHeartbeat`, off by default). Deaths/joins/boss-defeats are on by default and always log locally too,
+  even with no Discord webhook configured, so nothing is silently lost if Discord isn't set up.
+- **Heartbeat log line.** `HeartbeatEnabled` (on by default, section `1 - General`) logs one summary line every
+  `HeartbeatIntervalMinutes` (default 15) with uptime and who's online, so an admin tailing the log can confirm the
+  mod is alive without turning on full verbose logging. Shares its interval with the optional Discord heartbeat above.
+
+### Changed
+- **`CarryWeightMultiplier` default raised from 1.0x to 2.0x** (existing installs keep whatever value is already in
+  their `.cfg` - this only changes the default for a fresh install).
+- **Night Spawns now cover the full Seeker, Charred, and Fenring families by default.** `NightSpawnBlockedCreatures`
+  gained `Seeker`, `SeekerBrood`, `SeekerBrute`, `SeekerQueen`, `Charred_Archer`, `Charred_Archer_Fader`,
+  `Charred_Mage`, `Charred_Melee`, `Charred_Melee_Dyrnwyn`, `Charred_Melee_Fader`, `Charred_Twitcher`,
+  `Charred_Twitcher_Summoned`, `Fenring`, `Fenring_Cultist`, `Fenring_Cultist_Hildir`, `Fenring_Cultist_Hildir_nochest`
+  (every real prefab name confirmed against a live ZNetScene prefab dump, not guessed), and `NightSpawnBlockedBiomes`
+  gained `Mistlands`, `AshLands`, and `Plains` to match - both lists must agree for a spawn to be blocked, so the
+  biome list had to grow too or the new creature names would have done nothing by default.
+- **Every config setting written in plain language**, leading with what it actually does in practice before any
+  technical detail.
+
+### Fixed
+- **Status Effect Roster: a short-lived effect (`Rested`, 1-second vanilla duration) could flicker off between
+  re-applications.** The roster's re-ping scheduler had a hardcoded 2-second floor that was slower than `Rested`'s
+  own natural duration; it's now a per-tick real-time cooldown with no such floor, so even very short-lived vanilla
+  effects stay reliably active.
+- **Status Effect Roster could silently resolve zero assets on some boots.** `ObjectDB.instance` is sometimes still
+  null at the exact moment this mod otherwise treats the world as "ready" (a genuine Unity initialization-order race,
+  not a fixed sequence) - the roster now retries until `ObjectDB.instance` actually exists instead of giving up after
+  one attempt. The existing All Items Float feature had this same latent race; it was never visibly affected only
+  because it has a second, independent way of finding item prefabs.
+- **`GP_Moder` never re-granted after the first time.** Leaving the ship's wheel mid-cooldown left the roster's
+  re-ping timer *frozen* rather than reset, so a player who got on and off the helm in anything shorter than a full
+  120-second window could go the rest of the session without a single re-grant after the very first one. Re-taking
+  the wheel - the same ship or a different one - now grants immediately regardless of how much of the previous
+  cooldown was left. **Live-confirmed working end to end.**
+
+## 0.6.5
+
+### Fixed
+- **All Items Float: live Fish no longer get frozen at the surface.**
+  `Fish` (the swimming creature prefab) carries its own `ItemDrop` component — used for hand-pickup fish and
+  to remember quality — on the very same GameObject as its swim AI. The buoyancy sweep was classifying every
+  `ItemDrop`-bearing prefab as dropped loot, so it also matched live fish: claiming ZDO ownership, zeroing
+  their Rigidbody velocity, and pinning `pos.y` to a fixed water-surface height every sweep tick. That fought
+  `Fish.Update()`'s own swim/wave/dive logic every frame, leaving fish stuck bobbing rigidly at the surface
+  instead of swimming naturally at depth.
+
+  `OnWorldReady` now skips any prefab with a `Fish` component when building the tracked-prefab set, so the
+  sweep, the ownership guard, and the forced-`Floating` pass never touch live fish — vanilla's own native
+  `Floating` component (Fish already has one) continues to handle them untouched.
+
+## 0.6.4
+
+### Fixed
+- **Security: Portal transit no longer triggers speed flag.**
+  `PositionWatch` samples player position every 3 seconds. A portal hop moves a player across the
+  entire world map in that window — the test server observed 109.7 m/s, nearly 3× the 40 m/s ceiling
+  — producing a false-positive `SECURITY:PositionWatch` audit entry on every portal use.
+
+  `IsLegitimateTransit()` is now evaluated before any flag fires. It suppresses the alert for three
+  classes of legitimate high-speed movement:
+
+  1. **Portal transit** (`IsPortalTransit`): iterates `ZDOMan.instance.GetPortals()` (the live
+     dictionary, no heap allocation) checking if either position sample is within 40 m of a portal
+     ZDO. Falls back to the portal's linked `ZDOExtraData.ConnectionType.Portal` target ZDO with a
+     60 m extended radius to tolerate players who walked a bit before the sample window opened.
+  2. **Dungeon / interior entry-exit**: `Character.InInterior()` (verified from the 1.0.7 decompile:
+     `position.y > 3000f`) changing between samples, or either sample above 2 000 m, or a vertical
+     delta exceeding 1 000 m — all reliable signatures of zone-transition teleportation.
+  3. **Admin teleport**: peer socket hostname resolves as an admin via `ZNet.instance.IsAdmin()`.
+
+  Additionally: respawn is now tracked via `ZDOVars.s_dead` state. The tick immediately following a
+  death→respawn transition is silently skipped, since spawning at a bed or world spawn produces the
+  same magnitude of position jump as a portal.
+
+  Fly/noclip height-check is also skipped while a player is inside a dungeon interior
+  (`pos.y < 2 000 m` guard), preventing `WorldGenerator.GetHeight` comparisons against terrain that
+  sits thousands of metres below the instance.
+
+## 0.6.3
+
+### Fixed
+- **Item Buoyancy: Robust Headless Water & Ground Detection.**
+  - **Headless Terrain & Water Floor Resolution:** Previously, `IsWaterborneItem` relied on `Floating.GetLiquidLevel`
+    (which queries `WaterVolume` physics colliders) and `ZoneSystem.GetGroundHeight` (which raycasts against `terrain` colliders).
+    On headless dedicated servers, neither collider type exists for items, causing liquid detection to return `-10000f`
+    and items to sink to the seabed.
+  - **Three-Tier Ground Height:** Now resolves ground elevation via `Heightmap.GetHeight(worldPos, out h)` (including player
+    terrain modifications), falling back to procedural `WorldGenerator.instance.GetHeight(pos.x, pos.z)`. Any location outdoors
+    where `groundHeight < ZoneSystem.m_waterLevel` (30m) is recognized as open water.
+  - **Vertical Waterborne Window:** Fixed the check that previously disqualified items once lifted to `targetY`. The upper
+    bound now correctly encompasses items floating at the surface (`pos.y <= targetY + 0.25f`), keeping them continuously
+    identified as waterborne, while safely excluding items on ship decks (`y >= 30.8m`) and docks (`y >= 31.5m`).
+  - **Handoff Protection Window:** Added a 3-second pickup allowance on `RPC_RequestOwn` so the server never wrestles
+    ownership away from a player while their vanilla client executes `Pickup()` into inventory.
+  - **Sweep Cadence:** Default `FloatSweepInterval` reduced from 1.0s to 0.3s for near-instant buoyant bobbing. Sunken items
+    are actively rescued and hoisted to the surface.
+
+### Fixed
+- **World Modifier & Capacity Sync: Patched GlobalKeys Dispatch.**
+  Previously, `WorldRatesEngine` set the `carryweightrate` global key during `ZNetScene.Awake` via `ZoneSystem.SetGlobalKey`.
+  On dedicated servers, `ZoneSystem.Start` had not yet registered the `"SetGlobalKey"` RPC with `ZRoutedRpc`, and subsequent
+  `ZNet.WorldSetup` initialization cleared all 41 global keys via `SetStartingGlobalKeys`, wiping the modifier before
+  any player joined.
+  - **Direct Key Injection:** Now invokes `ZoneSystem.GlobalKeyAdd(key, true)` directly on the server instance.
+  - **Lifecycle Harmony Patches (`WorldRatesPatches`):** Added patches on `ZoneSystem.SetStartingGlobalKeys` (postfix),
+    `ZoneSystem.Start` (postfix), and `ZoneSystem.SendGlobalKeys` (prefix). Any time starting keys are reset or global
+    keys are dispatched to connecting peers (`OnNewPeer`), the configured `carryweightrate` is guaranteed to be present
+    in `m_globalKeys` before the network packet is serialized and sent to the vanilla client.
+
+## 0.6.1
+
+### Fixed
+- **Container Auto-Vacuum Feedback: Switched to Fermenter VFX/SFX & Routed RPC.**
+  Previously, `VacuumEngine.PlayVacuumEffect` called `Object.Instantiate` directly on the dedicated server
+  for `vfx_auto_pickup`. Because dedicated servers run headless (`-nographics`) and `vfx_auto_pickup` has
+  `m_persistent: false` and a 1-second timeout with unused player components, no visual effect was ever
+  replicated or shown on vanilla clients.
+  - **Replaced with the Fermenter Splash:** Now spawns vanilla's own fermenter liquid splash (`vfx_fermenter_add`)
+    paired with the mead splash sound (`sfx_fermenter_add`), creating immediate, highly visible and satisfying
+    feedback as containers gulp down items.
+  - **Routed Network Broadcast:** Utilizes Valheim's native `ZRoutedRpc` `"SpawnObject"` mechanism, registered
+    on every 1.0 vanilla client. The server broadcasts the effect specifically to connected peers within
+    visible/audible range (80m) of the container, causing clients to execute `Object.Instantiate` locally with
+    zero server memory/particle overhead, no network lag, and 100% vanilla client compatibility.
+  - **Configurable Prefabs:** Added `VacuumEffectPrefab` (default `vfx_fermenter_add`) and `VacuumSoundPrefab`
+    (default `sfx_fermenter_add`) in `2 - Vacuum & Auto-Harvest` for server administrators to fully customize
+    or silence the effect.
+
+## 0.6.0
+
+### Added
+- **All Items Float: strictly server-side buoyancy for all dropped items.** Solves Valheim's oldest
+  hazard — metal, ores, scrap, gear, and serpent scales sinking to the inaccessible ocean floor — with
+  zero client-side installation. Deep-dive audited against the 1.0.7 decompile: vanilla only attaches the
+  `Floating` MonoBehaviour to wood, fish and tombstones, while clients simulate physics locally for any
+  item they own. Wonderland solves this by: (1) enhancing all server-side `ItemDrop` prefabs in `ObjectDB`
+  with `Floating`, (2) scanning submerged item ZDOs near players and lifting them to the water surface,
+  (3) maintaining server ownership (`zdo.SetOwner(serverSession)`) with revision escalation so client
+  physics cannot sink them, (4) guarding `ZDOMan.ReleaseNearbyZDOS` from passively re-assigning waterborne
+  items to nearby players, and (5) intercepting `ZRoutedRpc.HandleRoutedRPC` for `RPC_RequestOwn` so
+  players pressing E or entering auto-pickup range immediately receive ownership and execute `Pickup()`.
+  Configurable via `AllItemsFloatEnabled` (toggle on/off, default on), `FloatSurfaceOffset`, and
+  `FloatSweepInterval` in `2 - Vacuum & Auto-Harvest`.
+- **Adjustable Max Carry Capacity: native 1.0 world modifier scaling.** Earlier releases documented
+  carry weight as "confirmed impossible server-side on any Valheim build" based on pre-1.0 unnetworked
+  player fields. Deep-dive audit of the 1.0.7 decompile revealed Valheim 1.0's native World Rate system:
+  `Player.GetMaxCarryWeight()` computes `(base + statusEffects) * Game.m_carryWeightRate`, which reads
+  `GlobalKeys.CarryWeightRate` (`"carryweightrate <int_percentage>"`). The dedicated server broadcasts
+  this key to vanilla clients via `ZRoutedRpc` `GlobalKeys`. Stock vanilla clients receive the key, display
+  the increased number directly in their inventory GUI (e.g. `0 / 600`), and enforce encumbrance and
+  auto-pickup against the higher ceiling with zero client mods. Configurable via `CarryWeightMultiplier`
+  in new section `15 - World Modifiers & Capacity` (default `1.0` vanilla; `1.5` = 450 lbs base; `2.0` =
+  600 lbs base). Dynamic config changes broadcast immediately to all connected players in real time.
+
+## 0.5.2
+
+### Fixed
+- **Structure Upkeep not repairing anything a player could see.** Five compounding defects, each
+  verified against the 1.0.7 server decompile. (1) The scan asked vanilla's one-prefab-at-a-time
+  `GetAllZDOsWithPrefabIterative` for each of the **797** WearNTear-bearing prefab types in turn, and
+  each call re-walks all 262,144 sector slots (`new ZDOMan(512)`), so a single full cycle ran to hours -
+  slower than rain decay. (2) Even when a piece was reached, the owning client never learned about it:
+  `WearNTear` caches health in `m_healthPercentage` and only refreshes it in `Awake` or
+  `RPC_HealthChanged`, so the piece kept its worn material and damaged hover text, and - since
+  `UpdateWear` gates rain damage on `GetHealthPercentage() > 0.5f` - went on behaving as if still at
+  half health until the zone reloaded. (3) It called `SetOwner` first, which `ZDO.Set` never needed,
+  and which actively broke the hammer: `ZNetView.InvokeRPC` routes to `ZDO.GetOwner()`, so the
+  player's own `RPC_Repair` went to a server with no instance to receive it. (4) No creator check, so
+  every deliberately pre-damaged world-gen ruin was being "repaired" too. (5) Repaired to the prefab's
+  base `m_health`, which `WearNTear.Awake` scales by world level on the client, so on a world-level
+  server every repair landed permanently short and was re-written every sweep.
+  Now: a per-player pass over each connected player's active area (`FindNear`, ~128m - decay can only
+  ever happen inside a client's active area, so this is the ground that matters and it is a few
+  sectors instead of a quarter-million), plus a background full-map sweep that matches a HashSet of
+  all 797 prefab hashes in **one** walk of the sector array (new `ZdoSpatialQuery.PrefabSetSweeper`).
+  Each repair writes the ZDO without touching ownership, then routes vanilla's own `RPC_HealthChanged`
+  by ZDOID so the client's cached percentage, visuals and hover text update at once (capped at 256
+  broadcasts per sweep so the first pass over an old world can't flood the RPC queue; anything past the
+  cap is still repaired and catches up on zone reload). Player-built pieces only by default (creator
+  != 0, exactly `Piece.IsPlacedByPlayer()`). Repairs now log a per-sweep count so the feature is
+  observable. Config: `StructureUpkeepBatchSize` is replaced by `StructureUpkeepSectorsPerSweep`
+  (its unit changed - populated sectors, not scanner calls); new `StructureUpkeepPlayerRadius` and
+  `StructureUpkeepPlayerBuiltOnly`.
+
+## 0.5.1
+
+### Fixed
+- **Container Rows expanding unpredictably.** The row-growth sweep round-robinned through every
+  container-bearing prefab in the game - every `TreasureChest_*` variant, dungeon pot, tar pit, cargo
+  crate, 64 types on a stock install - to find the ~18 that are actually player-buildable and eligible
+  to grow. Most of the sweep's budget went to prefabs that always failed the eligibility check, which
+  is what made a specific chest's turn to be visited (and therefore anchored into its grown size)
+  arrive so unpredictably. The scanner is now built from just the eligible set, rebuilt every 60s so an
+  edit to `ContainerRowsExcludedContainers` still takes effect without a restart. Verified live: the
+  boot log now reads `x2 rows on 18 of 64 container type(s)` instead of scanning all 64.
+- **Ship cargo silently excluded from every container feature.** Every container lookup in the mod
+  resolved a prefab's `Container` component from its root GameObject only. Karve, VikingShip and
+  VikingShip_Ashlands build their cargo hold the way vanilla builds it - a *child* object carrying its
+  own `Container` with `m_rootObjectOverride` pointed at the ship's own ZNetView, so the item blob
+  saves under the ship's ZDO - which a root-only lookup never finds. Ships were therefore invisible to
+  Container Rows, the vacuum, the overflow guard, background sort, and the item-integrity sweep alike.
+  `ContainerRegistry` now resolves a container template from the root or, failing that, any child, and
+  every engine goes through that one resolver. Verified live against a real dedicated-server boot:
+  Karve (2x2->2x4), VikingShip (6x3->6x6) and VikingShip_Ashlands (8x4->8x8) now appear in the eligible
+  set and grow/vacuum exactly like a land chest. Raft correctly gets none of this - it has no cargo
+  hold in vanilla, confirmed by elimination on the same live run.
+
+### Added
+- **A visual cue when a container vacuums ground items.** Spawns vanilla's own `vfx_auto_pickup`
+  prefab - the sparkle vanilla plays for its built-in auto-pickup-nearby-items feature - at the
+  container on a successful pull. It's a real networked, self-destructing object already shipped on
+  the dedicated server, so a completely vanilla client renders it with nothing installed client-side.
+  New `VacuumEffectEnabled` toggle in `2 - Vacuum & Auto-Harvest` (default on).
+
+## 0.5.0
+
+### Added
+- **Discord Notify: webhook announcements for server status and player logins.** Posts to a Discord
+  webhook when the world finishes loading and on shutdown, and when a player connects or disconnects -
+  configurable message templates with `{world}`/`{player}` placeholders and a display username. New
+  config section `14 - Discord Notify`, entirely **local to this server** (never synced to clients,
+  unlike almost every other setting) since a webhook URL is a per-server secret.
+  - Join/leave detection hooks `ZNet.RPC_PeerInfo` (verified against the decompile: the player-name
+    field is only ever set after every rejection path - bad version, blacklist, full server, wrong
+    password, duplicate connection - has already returned early, so a hook that checks it only fires
+    for a connection that actually completed the handshake) and `ZNet.Disconnect` (the same vanilla
+    teardown point the bundled ServerSync library already hooks). A peer is only announced as "left" if
+    its "joined" was actually announced first, so a rejected or duplicate connection attempt can never
+    produce a spurious leave message.
+  - Webhook posts are fire-and-forget over one shared `HttpClient` (a new instance per post risks
+    socket exhaustion under Mono) and best-effort: a failed or rate-limited post is logged and dropped,
+    never retried. The shutdown/offline message is the one exception - it blocks up to 3 seconds, since
+    the process can exit immediately after `OnDestroy` returns and would otherwise kill a fire-and-forget
+    post before it ever ran.
+  - Needed a plain `System.Net.Http` reference added to the project (confirmed present in the actual
+    dedicated server's Managed folder, not pinned into libs-Tools since it's a stock .NET Framework
+    assembly rather than a game DLL).
+
 ## 0.4.0
 
 ### Added
@@ -291,8 +565,8 @@ work on a real headless server at all.
 ### Removed
 - Everything client-simulated and therefore unenforceable server-side: combat/movement/stamina tuning, the HUD overlay, portal PIN-locking/single-portal dialing, craft-from-containers (the live crafting check only ever reads the player's own inventory, with no server-side path around it)
 - Farming automation (plant-anything, mass planting, crop growth speed) — out of scope for this rebuild
-- Max stamina / max carry weight adjustment — confirmed impossible server-side on any Valheim build (neither value is ever written to a ZDO); not carried forward as a non-functional placeholder
+- Max stamina adjustment — confirmed impossible server-side on any Valheim build (neither value is ever written to a ZDO); not carried forward as a non-functional placeholder (note: max carry weight was solved in 0.6.0 via Valheim 1.0's world rate modifier system)
 
 ### Known limitations
-- Max stamina/carry weight: see above, not a bug, not planned
+- Max stamina: see above, not a bug, not planned (max carry weight is now fully supported as of 0.6.0)
 - Crossplay servers have PlayFab's own separate, non-configurable 10-player lobby cap
