@@ -16,6 +16,7 @@ namespace Wonderland.Subsystems.ItemFlow
         {
             WaterBuoyancyEngine.Initialize(harmony);
             SubsystemRegistry.SafePatch(harmony, typeof(HarvestTriggerPatch));
+            SubsystemRegistry.SafePatch(harmony, typeof(LatePickupPatch));
         }
 
         public void OnWorldReady()

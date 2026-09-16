@@ -354,3 +354,57 @@ already holds and count seconds to `Vacuum moved` (expect ≤ VacuumInterval); (
 `[AutoHarvest] … swept N` line should be followed by `Vacuum moved` lines in the same second; (4) then set
 `VacuumInterval = 2` and `VacuumBatchSize = 25` back and re-check step 2.
 
+## 13. 2026-09-16 (afternoon): the 0.8.3 review lands; settle step, fish, unwanted-stack memo (→ 0.8.4)
+
+**Reviewer verdict on 0.8.3** (one Opus reviewer, run wf_b200f699-21d, ~15 min; my inline verification agreed on every
+point): the same-frame double-move was confirmed closed in the committed code. Four majors, all real against the
+decompile: (1) `_itemDropPrefabHashes` re-derived WaterBuoyancy's item set without its Fish carve-out - live fish
+counted as ground items (every shore chest loaded each pass; a chest holding that fish type could pull a swimming one
+out of the lake); (2) `_groundItems` qualified containers before any filter, with no budget - one unwanted stack loaded
+every chest in reach every pass, and excluding an item made it *more* expensive; (3) moved stacks were never pruned
+from the qualifying set within a pass; (4) a vacuum-vs-client-pickup duplication window that 0.8.3's speed made likely
+(`Humanoid.Pickup` 7397 adds to the inventory before its `DestroyZDO` leaves; the server cannot veto it). Minors:
+mid-frame visited reset overstated in a comment, non-re-entrant foreach over a static buffer, no prefab-count log.
+Nits: `_pendingGroundDestroy` not exception-safe, dead `processed` return, splash volume.
+
+**0.8.4 (this tree), after both reviewers:** the settle step - a client-owned stack is claimed (`SetOwner` +
+`DataRevision += 4096` + zeroed velocities + `ForceSendZDO(previousOwner)`, WaterBuoyancy's own recipe, because
+`RPC_ZDOData` applies a newer-data packet's owner unconditionally) and moved 1 s later only if still the server's
+(`TryTakeOwnership`, `ProcessMaturedHolds`, `ReleaseHold`/`HandBack`); `ZdoSetOwnerPatch` also gates on
+`VacuumEngine.ShouldBlockOwnerChange` (held stacks and stacks moved this frame); `HandlePickupRequest` refuses a stack
+moved this frame, refuses a repeat request from a player who was granted it and could not take it while it is held
+(the full-inventory case the protocol reviewer found - otherwise the chest never got it), and re-affirms ownership
+with a revision bump when the requester already owns it (divergence repair); **`LatePickupPatch`** (new, prefix on
+`ZDOMan.RPC_DestroyZDO`) takes a stack back out of the chest when a client's late destroy proves the player got it
+first - the backstop for any latency the 1 s hold does not cover. Fish carve-out at both sites (set built from
+`m_namedPrefabs`, with prefab-name and item-name side tables); placed item-pieces (`s_piece`, feasts) and hatching
+eggs (`s_growStart`) skipped; **container name cache** keyed by `DataRevision` (a chest that has not changed and holds
+none of the item types lying near it is never loaded - the pass-logic reviewer's "32 loads per pass forever" case is
+now zero); containers collected first and rotated properly (`_nearRotation += processed`), 32-load cap, busy chests
+and over-cap chests mark stacks truncated (not memoised); 5 s unwanted memo; cached exclusion sets; `ProcessContainer`
+re-ordered (overflow -> commit, vacuum with per-stack try/catch, drain -> commit) inside one try/catch that clears the
+destroy queue without destroying, forgets the move records and restores the counter; flush before splash; one splash
+per chest per frame; "container full" once per chest+item per minute; the AutoHarvest line gains `, N stacks into a
+chest` and prints `4.5 m`; `[Vacuum] tracking …` at world load (LogAlways); the buoyancy grant line is verbose-only;
+buoyancy purges run with the feature off too. No new config keys. Build 0/0. Known residual (CHANGELOG "Changed"):
+a partial manual pickup inside the ~100 ms claim window duplicates the part taken. Live cfg untouched (still
+VacuumInterval 1 / VacuumBatchSize 60 / radii 4.5 / 15 / 32).
+
+**Reviewer verdicts on 0.8.4 (two Agent-tool reviewers, ~15 and ~22 min):** protocol reviewer - one major (full-inventory
+requester blocks the chest forever, fixed), one major (0.75 s hold beatable by send-queue backpressure, now 1 s plus
+the late-pickup take-back), one low-probability major (WaterBuoyancy's fresh claim reopened the fast path, gated on
+claim age), minors/nits all applied except the mid-air-freeze cosmetic; verified: no `ClaimOwnership` on items, update
+ordering, no frozen end state, prefix safety, claim writes. Pass-logic reviewer - Feast/egg vacuuming (fixed), rotation
+over the raw sector list (fixed), commit ordering in the try/catch (fixed), busy-chest judging (fixed), full-log spam
+(fixed), verbose boot line (fixed), shared warn limiter (fixed); verified: prefab key space, re-entrancy, per-frame
+destroyed set, exclusion-set caching across hot reloads, hot reload of every setting.
+
+**Test after the 0.8.4 boot:** (1) `Starting Wonderland v0.8.4`, `Successfully applied Harmony patch set:
+LatePickupPatch`, and one `[Vacuum] tracking 64 container and N item prefab types.` line; (2) drop a stack a nearby
+chest holds and step back: `Vacuum moved` within VacuumInterval + 1 s; (3) drop one and stay on it: auto-pickup gives
+it back and no `Vacuum moved` line appears for it; (4) with a FULL inventory, drop a stack beside its chest and stand on
+it: it should still go into the chest within a few seconds (this was the case that looped); (5) pick one carrot:
+`[AutoHarvest] Pickable_Carrot picked by '…' - swept N more within 4.5 m, N stacks into a chest.`; (6) leave a trophy on
+the storage-room floor: no repeating per-second activity for it; (7) a chest holding fish beside a lake: the fish keep
+swimming; a feast on a table near a food chest stays on the table; (8) any `taken back out of the chest` line means the
+backstop fired - expected only under real lag, worth a look if it repeats.

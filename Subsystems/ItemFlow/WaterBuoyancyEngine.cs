@@ -34,6 +34,14 @@ namespace Wonderland.Subsystems.ItemFlow
     {
         private static readonly HashSet<int> _itemDropPrefabHashes = new HashSet<int>();
         private static readonly Dictionary<ZDOID, float> _recentPickups = new Dictionary<ZDOID, float>();
+        /// <summary>Who was last granted which item, and when: a peer that asks again for a stack it was
+        /// granted and did not take (full inventory, over weight) is refused while the vacuum holds it.</summary>
+        private static readonly Dictionary<ZDOID, (long peer, float at)> _grants = new Dictionary<ZDOID, (long, float)>();
+        /// <summary>When this engine last took a waterborne item from a client, for VacuumEngine's fast path.</summary>
+        private static readonly Dictionary<ZDOID, float> _claimedAt = new Dictionary<ZDOID, float>();
+        private static readonly List<ZDOID> _purgeScratch = new List<ZDOID>();
+        private const float GrantMemorySeconds = 60f;
+        private const float ClaimMemorySeconds = 10f;
         private static readonly HashSet<ZDOID> _sweptThisTick = new HashSet<ZDOID>();
         private static readonly List<ZDO> _scratch = new List<ZDO>();
         private static float _timer;
@@ -108,11 +116,6 @@ namespace Wonderland.Subsystems.ItemFlow
 
         public static void OnUpdate(float dt)
         {
-            if (WonderlandConfig.AllItemsFloatEnabled?.Value != true || ZDOMan.instance == null || ZNet.instance == null)
-            {
-                return;
-            }
-
             _timer += dt;
             float interval = WonderlandConfig.FloatSweepInterval?.Value ?? 0.3f;
             if (_timer < interval)
@@ -121,7 +124,14 @@ namespace Wonderland.Subsystems.ItemFlow
             }
             _timer = 0f;
 
+            // The pickup grace and grant memory serve the vacuum too, so they are kept tidy whether or not
+            // items float.
             PurgeStalePickupAllowances();
+            if (WonderlandConfig.AllItemsFloatEnabled?.Value != true || ZDOMan.instance == null || ZNet.instance == null)
+            {
+                return;
+            }
+
             _sweptThisTick.Clear();
 
             float surfaceOffset = WonderlandConfig.FloatSurfaceOffset?.Value ?? -0.25f;
@@ -155,6 +165,10 @@ namespace Wonderland.Subsystems.ItemFlow
                         if (!isServerOwner || Mathf.Abs(pos.y - targetY) > 0.05f)
                         {
                             pos.y = targetY;
+                            if (!isServerOwner)
+                            {
+                                _claimedAt[zdo.m_uid] = Time.time;
+                            }
                             zdo.SetOwner(serverSession);
                             zdo.SetPosition(pos);
                             zdo.DataRevision += 4096;
@@ -238,14 +252,53 @@ namespace Wonderland.Subsystems.ItemFlow
             ZDO zdo = ZDOMan.instance.GetZDO(targetZDO);
             if (zdo == null) return;
             if (!_itemDropPrefabHashes.Contains(zdo.GetPrefab())) return;
+            if (VacuumEngine.WasMovedThisFrame(targetZDO))
+            {
+                // The vacuum put this stack in a chest earlier this frame and its DestroyZDO is queued: granting
+                // it now would let the player pick up a copy in the frame between the two messages.
+                return;
+            }
+            if (zdo.GetOwner() == senderPeerID)
+            {
+                // The requester already owns it as far as this server knows, yet asks - its copy disagrees
+                // (a stale packet crossed an ownership change). Re-send the owner with a higher revision so
+                // it learns, instead of leaving a stack nobody simulates.
+                zdo.IncreaseOwnerRevision();
+                ZDOMan.instance.ForceSendZDO(senderPeerID, targetZDO);
+                return;
+            }
+            if (_grants.TryGetValue(targetZDO, out (long peer, float at) last) && last.peer == senderPeerID
+                && Time.time - last.at > 3f && VacuumEngine.IsHeld(targetZDO))
+            {
+                // Granted to this same player once already, grace long over, stack still here: they could
+                // not take it (Player.AutoPickup asks for ownership before it checks room or weight). The
+                // chest's turn - the client's own retry backoff outlasts the settle hold.
+                return;
+            }
 
             if (zdo.IsOwner() || !zdo.HasOwner())
             {
                 _recentPickups[targetZDO] = Time.time + 3f;
+                _grants[targetZDO] = (senderPeerID, Time.time);
                 zdo.SetOwner(senderPeerID);
                 ZDOMan.instance.ForceSendZDO(targetZDO);
-                WonderlandDebug.LogAlways($"[WaterBuoyancy] Granted pickup ownership of item {targetZDO} ({zdo.GetPrefab()}) to peer {senderPeerID}");
+                WonderlandDebug.LogInfo($"[WaterBuoyancy] Granted pickup ownership of item {targetZDO} ({zdo.GetPrefab()}) to peer {senderPeerID}");
             }
+        }
+
+        /// <summary>True when this engine took the item from a client less than <paramref name="seconds"/> ago -
+        /// that client may not have heard yet.</summary>
+        public static bool ClaimedWithin(ZDOID uid, float seconds)
+        {
+            return _claimedAt.TryGetValue(uid, out float at) && Time.time - at < seconds;
+        }
+
+        /// <summary>True while a player who asked for this item with RPC_RequestOwn is inside the 3 s pickup
+        /// grace HandlePickupRequest granted. VacuumEngine leaves such a stack alone (it is theirs), and the
+        /// SetOwner prefix lets the grant through even while the vacuum holds the stack.</summary>
+        public static bool HasPickupGrace(ZDOID uid)
+        {
+            return _recentPickups.TryGetValue(uid, out float pickupTime) && Time.time < pickupTime;
         }
 
         public static bool ShouldBlockOwnerChange(ZDO zdo, long targetUid)
@@ -281,19 +334,51 @@ namespace Wonderland.Subsystems.ItemFlow
 
         private static void PurgeStalePickupAllowances()
         {
-            if (_recentPickups.Count == 0) return;
             float now = Time.time;
-            var expired = new List<ZDOID>();
-            foreach (KeyValuePair<ZDOID, float> kvp in _recentPickups)
+            if (_recentPickups.Count > 0)
             {
-                if (now >= kvp.Value)
+                _purgeScratch.Clear();
+                foreach (KeyValuePair<ZDOID, float> kvp in _recentPickups)
                 {
-                    expired.Add(kvp.Key);
+                    if (now >= kvp.Value)
+                    {
+                        _purgeScratch.Add(kvp.Key);
+                    }
+                }
+                for (int i = 0; i < _purgeScratch.Count; i++)
+                {
+                    _recentPickups.Remove(_purgeScratch[i]);
                 }
             }
-            for (int i = 0; i < expired.Count; i++)
+            if (_grants.Count > 0)
             {
-                _recentPickups.Remove(expired[i]);
+                _purgeScratch.Clear();
+                foreach (KeyValuePair<ZDOID, (long peer, float at)> kvp in _grants)
+                {
+                    if (now - kvp.Value.at > GrantMemorySeconds)
+                    {
+                        _purgeScratch.Add(kvp.Key);
+                    }
+                }
+                for (int i = 0; i < _purgeScratch.Count; i++)
+                {
+                    _grants.Remove(_purgeScratch[i]);
+                }
+            }
+            if (_claimedAt.Count > 0)
+            {
+                _purgeScratch.Clear();
+                foreach (KeyValuePair<ZDOID, float> kvp in _claimedAt)
+                {
+                    if (now - kvp.Value > ClaimMemorySeconds)
+                    {
+                        _purgeScratch.Add(kvp.Key);
+                    }
+                }
+                for (int i = 0; i < _purgeScratch.Count; i++)
+                {
+                    _claimedAt.Remove(_purgeScratch[i]);
+                }
             }
         }
     }
@@ -304,7 +389,10 @@ namespace Wonderland.Subsystems.ItemFlow
         [HarmonyPrefix]
         public static bool Prefix(ZDO __instance, long uid)
         {
-            if (WaterBuoyancyEngine.ShouldBlockOwnerChange(__instance, uid))
+            // Two holders of server ownership, one gate: WaterBuoyancy keeps waterborne items at the surface,
+            // VacuumEngine keeps a claimed ground stack for its settle step. Both let a player's own pickup
+            // request through (HandlePickupRequest sets the grace before it calls SetOwner).
+            if (WaterBuoyancyEngine.ShouldBlockOwnerChange(__instance, uid) || VacuumEngine.ShouldBlockOwnerChange(__instance, uid))
             {
                 return false;
             }

@@ -14,7 +14,9 @@ namespace Wonderland.Subsystems.ItemFlow
     ///    of them (nothing on the ground, nothing loaded - the steady state), plus the world-wide
     ///    round-robin over every container type for chests nobody is near. The round-robin alone was
     ///    the 0.8.2 complaint "vacuum takes too long": 64 container types x a 600k-ZDO world at 25
-    ///    chunks per pass gave any one chest its turn about every half minute.
+    ///    chunks per pass gave any one chest its turn about every half minute. Since 0.8.4 a stack a
+    ///    client owns is claimed first and moved a second later (the settle step,
+    ///    see VacuumGroundItemsInto): moving it in the same instant its player picked it up duplicated it.
     ///  - Auto-harvest: event-driven since 0.8.2. The picking client's own "RPC_SetPicked" broadcast
     ///    (the one wire-visible event of every pick, crops included) reaches the server's ZRoutedRpc and
     ///    HarvestTriggerPatch hands it to OnPickedRpc; half a second later the radius around that plant is
@@ -43,6 +45,110 @@ namespace Wonderland.Subsystems.ItemFlow
         private static readonly Dictionary<ZDOID, long> _harvestedAt = new Dictionary<ZDOID, long>();
         private const int MaxTrackedPickables = 50000;
 
+        /// <summary>A ground stack the server has taken from a client and is letting settle before it moves it
+        /// (see the "settle step" note above VacuumGroundItemsInto): when the hold matures, and which container
+        /// asked for it.</summary>
+        private readonly struct GroundHold
+        {
+            public readonly float Until;
+            public readonly ZDOID Container;
+
+            public GroundHold(float until, ZDOID container)
+            {
+                Until = until;
+                Container = container;
+            }
+        }
+
+        private static readonly Dictionary<ZDOID, GroundHold> _holds = new Dictionary<ZDOID, GroundHold>();
+        private static readonly List<ZDOID> _holdScratch = new List<ZDOID>();
+        private static readonly HashSet<ZDOID> _holdContainersThisFrame = new HashSet<ZDOID>();
+        /// <summary>Ground stacks a pass looked at and no container in reach would take, with the time until
+        /// which they stay out of the qualifying set (the containers around them are not loaded for them).</summary>
+        private static readonly Dictionary<ZDOID, float> _unwantedUntil = new Dictionary<ZDOID, float>();
+        private static readonly List<ZDOID> _unwantedScratch = new List<ZDOID>(); // own list: PruneUnwanted can run inside ProcessMaturedHolds' loop over _holdScratch
+        private static readonly List<bool> _groundTruncated = new List<bool>();
+        private static readonly HashSet<ZDOID> _effectsThisFrame = new HashSet<ZDOID>();
+        private static int _nearRotation;
+        private static int _stacksMoved;
+        private static string _excludedItemsSource;
+        private static string _excludedContainersSource;
+        private static readonly HashSet<string> _excludedItems = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> _excludedContainers = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+        /// <summary>Per item prefab hash: the prefab's name (what the exclusion list matches) and the shared item
+        /// name (what match-required compares), so a ground ZDO is classified without a single GetPrefab.</summary>
+        private static readonly Dictionary<int, string> _prefabNameByHash = new Dictionary<int, string>();
+        private static readonly Dictionary<int, string> _itemNameByPrefab = new Dictionary<int, string>();
+        private static readonly List<string> _groundNames = new List<string>();
+        private static readonly List<ZDO> _nearContainers = new List<ZDO>();
+
+        /// <summary>What a container held the last time it was loaded, valid while its DataRevision is
+        /// unchanged (every write to a ZDO, by any client or by this server, raises it). Lets the near-player
+        /// pass answer "does any chest in reach already hold this?" without loading a chest that nobody has
+        /// touched since - the steady state with junk on the floor is zero loads.</summary>
+        private sealed class ContainerNames
+        {
+            public uint Revision;
+            public float SeenAt;
+            public readonly HashSet<string> Names = new HashSet<string>();
+        }
+
+        private static readonly Dictionary<ZDOID, ContainerNames> _containerNames = new Dictionary<ZDOID, ContainerNames>();
+        private static readonly List<ZDOID> _containerNameScratch = new List<ZDOID>();
+        private static readonly HashSet<(ZDOID, string)> _fullLogged = new HashSet<(ZDOID, string)>();
+        private static float _fullLoggedClearedAt;
+        private static float _lastVacuumWarning = -999f;
+        private const int MaxContainerNameEntries = 8192;
+        private const float ContainerNameTtlSeconds = 600f;
+        /// <summary>"container full" is reported once per chest and item type per this many seconds.</summary>
+        private const float FullLogIntervalSeconds = 60f;
+
+        /// <summary>How long a claimed stack settles before it is moved: the claim has to reach the owning
+        /// client (ZDOMan.SendZDOToPeers2 waits 50 ms and then serves one peer per frame, so plus one server
+        /// frame per connected peer, plus the trip) and any pickup that client committed before it heard has
+        /// to come back as its DestroyZDO (another trip). A second covers a 300 ms round trip on a 14-peer
+        /// server at 20 ms frames with room to spare; the case it does not cover - a peer whose send queue is
+        /// saturated, a server frame of 100 ms - is caught by LatePickupPatch, which sees that late DestroyZDO
+        /// and takes the copy back out of the chest.</summary>
+        private const float HoldSeconds = 1f;
+
+        /// <summary>A stack the vacuum moved, kept for RecentMoveSeconds so a client's late DestroyZDO for it
+        /// (LatePickupPatch) can be answered by taking the stack back out of the container it went into.</summary>
+        private readonly struct MovedStack
+        {
+            public readonly ZDOID Container;
+            public readonly string ItemName;
+            public readonly int Stack;
+            public readonly float At;
+
+            public MovedStack(ZDOID container, string itemName, int stack, float at)
+            {
+                Container = container;
+                ItemName = itemName;
+                Stack = stack;
+                At = at;
+            }
+        }
+
+        private static readonly Dictionary<ZDOID, MovedStack> _recentlyMoved = new Dictionary<ZDOID, MovedStack>();
+        private static readonly List<ZDOID> _movedScratch = new List<ZDOID>();
+        private static readonly List<MovedStack> _pendingTakeBacks = new List<MovedStack>();
+        private const float RecentMoveSeconds = 10f;
+        private const float TakeBackRetrySeconds = 30f;
+        /// <summary>A hold nobody got to act on (per-frame budget spent, container gone) is handed back this
+        /// long after it matured, so a stack is never left frozen.</summary>
+        private const float HoldHardExpirySeconds = 3f;
+        /// <summary>How long a stack no container in reach wanted stays out of the qualifying set. Short enough
+        /// that dropping a matching item into the chest is still followed by the stack within a few seconds;
+        /// long enough that a trophy on the floor does not load every chest in the room every pass.</summary>
+        private const float UnwantedRetrySeconds = 5f;
+        /// <summary>Load guard: containers one VacuumAround call may load. The rest wait for the next pass,
+        /// which starts from a rotated position so every container gets its turn.</summary>
+        private const int MaxContainersPerVacuumAround = 32;
+        /// <summary>Load guard: containers ProcessMaturedHolds may load per frame.</summary>
+        private const int MaxHoldContainersPerFrame = 8;
+        private const int MaxUnwantedEntries = 4096;
+
         public static void Initialize()
         {
             _containerScanner = new ZdoSpatialQuery.PrefabSetScanner(ContainerRegistry.PrefabNames);
@@ -53,20 +159,40 @@ namespace Wonderland.Subsystems.ItemFlow
                 _containerPrefabHashes.Add(name.GetStableHashCode());
             }
 
-            // Every prefab that is a dropped item, hashed the way ZDO.GetPrefab reports it (ZNetScene keys
-            // its prefab table by name.GetStableHashCode). Built here rather than borrowed from
-            // WaterBuoyancyEngine so the vacuum does not depend on a sibling feature's init order.
+            // Every prefab that is a dropped item, keyed the way ZDO.GetPrefab reports it: m_namedPrefabs is
+            // ZNetScene's own name.GetStableHashCode() table and the one ZNetScene.GetPrefab(int) resolves
+            // through, so this set and the per-item lookup below agree by construction. Built here rather
+            // than borrowed from WaterBuoyancyEngine so the vacuum does not depend on a sibling feature's init
+            // order - which is how 0.8.3 lost that set's one deliberate exception: a live Fish carries an
+            // ItemDrop on the same prefab (Fish.Awake takes GetComponent<ItemDrop>()), and dropping a caught
+            // fish puts a swimming one back in the water. Counting them as ground items kept every chest near
+            // a shore loaded each pass, and a chest holding that fish type would pull a live one out of the
+            // lake.
             _itemDropPrefabHashes.Clear();
+            _prefabNameByHash.Clear();
+            _itemNameByPrefab.Clear();
+            _containerNames.Clear();
             if (ZNetScene.instance != null)
             {
-                foreach (GameObject prefab in ZNetScene.instance.m_prefabs)
+                foreach (KeyValuePair<int, GameObject> entry in ZNetScene.instance.m_namedPrefabs)
                 {
-                    if (prefab != null && prefab.GetComponent<ItemDrop>() != null)
+                    GameObject prefab = entry.Value;
+                    ItemDrop drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+                    if (drop == null || prefab.GetComponent<Fish>() != null)
                     {
-                        _itemDropPrefabHashes.Add(prefab.name.GetStableHashCode());
+                        continue;
                     }
+                    string? itemName = drop.m_itemData?.m_shared?.m_name;
+                    if (itemName == null || itemName.Length == 0)
+                    {
+                        continue; // nothing match-required could ever compare it to
+                    }
+                    _itemDropPrefabHashes.Add(entry.Key);
+                    _prefabNameByHash[entry.Key] = prefab.name;
+                    _itemNameByPrefab[entry.Key] = itemName;
                 }
             }
+            WonderlandDebug.LogAlways($"[Vacuum] tracking {_containerPrefabHashes.Count} container and {_itemDropPrefabHashes.Count} item prefab types.");
         }
 
         public static void OnUpdate(float dt)
@@ -77,8 +203,11 @@ namespace Wonderland.Subsystems.ItemFlow
             }
 
             // Ground stacks moved last frame are gone from the sector index by now (their DestroyZDO went
-            // out in ZDOMan.Update), so the "already moved" set starts empty each frame.
+            // out in ZDOMan.Update), so the "already moved" set starts empty each frame. Every routed RPC
+            // that arrives before this frame's clear still sees last frame's moves (WasMovedThisFrame),
+            // whichever order Unity runs ZNet.Update and this in.
             _destroyedThisBatch.Clear();
+            _effectsThisFrame.Clear();
 
             if (WonderlandConfig.VacuumEnabled?.Value == true)
             {
@@ -90,6 +219,15 @@ namespace Wonderland.Subsystems.ItemFlow
                     ProcessVacuumBatch();
                     ProcessVacuumNearPlayers();
                 }
+                ProcessMaturedHolds();
+            }
+            else if (_holds.Count > 0)
+            {
+                ReleaseAllHolds(); // switched off mid-settle: the stacks go back to their players untouched
+            }
+            if (_pendingTakeBacks.Count > 0)
+            {
+                ProcessPendingTakeBacks();
             }
 
             if (WonderlandConfig.AutoHarvestEnabled?.Value == true)
@@ -109,14 +247,19 @@ namespace Wonderland.Subsystems.ItemFlow
             {
                 _ledgerPruneTimer = 0f;
                 PruneHarvestLedger();
+                PruneUnwanted(Time.time);
+                PruneContainerNames(Time.time, force: false);
+                PruneRecentlyMoved(Time.time);
             }
         }
 
-        /// <summary>One pass = one clear of the visited-container set, so a pass never loads the same chest
-        /// twice. _destroyedThisBatch (ground stacks already moved and queued for destruction) is NOT
-        /// cleared here but once per frame in OnUpdate: a queued DestroyZDO only leaves the sector index
-        /// in ZDOMan.Update, so a sweep's instant vacuum running later in the same frame would otherwise
-        /// see a stack the regular pass had just moved and move it a second time.</summary>
+        /// <summary>One pass = one clear of the visited-container set, so within a pass no chest is loaded
+        /// twice. The set is per pass, not per frame: the vacuum that follows a harvest sweep starts a pass
+        /// of its own (its drops did not exist when the regular pass ran), so on a frame with both, a chest
+        /// near the sweep is loaded once more. _destroyedThisBatch (ground stacks already moved and queued
+        /// for destruction) is NOT cleared here but once per frame in OnUpdate: a queued DestroyZDO only
+        /// leaves the sector index in ZDOMan.Update, so that second look would otherwise see a stack the
+        /// regular pass had just moved and move it a second time.</summary>
         private static void BeginVacuumPass()
         {
             _visitedThisPass.Clear();
@@ -156,9 +299,15 @@ namespace Wonderland.Subsystems.ItemFlow
             }
         }
 
-        /// <summary>Loads and processes every container within <paramref name="vacuumRadius"/> of at least
-        /// one ground item that lies within <paramref name="reach"/> of <paramref name="center"/>. Returns how
-        /// many containers were processed. Ground items first: no loose item, no container load.</summary>
+        /// <summary>Loads and processes the containers within <paramref name="vacuumRadius"/> of at least one
+        /// ground item that lies within <paramref name="reach"/> of <paramref name="center"/> and that may hold
+        /// that item's type - at most MaxContainersPerVacuumAround of them, from a start that rotates over the
+        /// containers between calls. Returns how many were processed. Ground items first: no loose item, no
+        /// container load. A ground item only counts while it could be taken at all (a dropped item, not
+        /// placed as a piece, not excluded, not moved or claimed already this frame, not recently found
+        /// unwanted); a container whose contents are known from an earlier load at its current DataRevision
+        /// is only loaded when it holds one of those item types. A stack still lying there after every
+        /// container in reach had its look is remembered as unwanted for UnwantedRetrySeconds.</summary>
         private static int VacuumAround(Vector3 center, float reach, float vacuumRadius)
         {
             if (ZNetScene.instance == null)
@@ -166,12 +315,17 @@ namespace Wonderland.Subsystems.ItemFlow
                 return 0;
             }
 
+            float now = Time.time;
             _groundItems.Clear();
+            _groundNames.Clear();
+            _groundTruncated.Clear();
             foreach (ZDO zdo in ZdoSpatialQuery.FindNear(center, reach, _groundBuffer))
             {
-                if (_itemDropPrefabHashes.Contains(zdo.GetPrefab()) && !_destroyedThisBatch.Contains(zdo.m_uid))
+                if (IsCandidateGroundItem(zdo, now, out string itemName))
                 {
                     _groundItems.Add(zdo);
+                    _groundNames.Add(itemName);
+                    _groundTruncated.Add(false);
                 }
             }
             if (_groundItems.Count == 0)
@@ -179,25 +333,54 @@ namespace Wonderland.Subsystems.ItemFlow
                 return 0;
             }
 
+            // Containers only, so the rotation and the cap count chests, not every tree and rock in the ring.
+            _nearContainers.Clear();
+            foreach (ZDO zdo in ZdoSpatialQuery.FindNear(center, reach + vacuumRadius, _nearBuffer))
+            {
+                if (_containerPrefabHashes.Contains(zdo.GetPrefab()) && !_visitedThisPass.Contains(zdo.m_uid))
+                {
+                    _nearContainers.Add(zdo);
+                }
+            }
+
             float radiusSqr = vacuumRadius * vacuumRadius;
             int processed = 0;
-            foreach (ZDO containerZdo in ZdoSpatialQuery.FindNear(center, reach + vacuumRadius, _nearBuffer))
+            // Index-based on purpose: ProcessContainer runs inside this loop, and the two spatial queries it
+            // can reach (VacuumGroundItemsInto, GridGrowth.FindNearestSiblingContainer) allocate their own
+            // lists today - an enumerator here would turn any future buffer reuse into an exception mid-pass.
+            int count = _nearContainers.Count;
+            int start = count > 0 ? (int)((uint)_nearRotation % (uint)count) : 0;
+            for (int k = 0; k < count; k++)
             {
-                if (!_containerPrefabHashes.Contains(containerZdo.GetPrefab()) || _visitedThisPass.Contains(containerZdo.m_uid))
-                {
-                    continue;
-                }
+                ZDO containerZdo = _nearContainers[(start + k) % count];
+                bool busy = ZdoInventoryIO.IsBusy(containerZdo); // a player has it open: not judged this pass
+                bool overBudget = processed >= MaxContainersPerVacuumAround;
+                bool known = _containerNames.TryGetValue(containerZdo.m_uid, out ContainerNames cached) && cached.Revision == containerZdo.DataRevision;
                 Vector3 position = containerZdo.GetPosition();
-                bool hasLooseItemNearby = false;
+                bool qualifies = false;
                 for (int i = 0; i < _groundItems.Count; i++)
                 {
-                    if ((_groundItems[i].GetPosition() - position).sqrMagnitude <= radiusSqr)
+                    ZDO ground = _groundItems[i];
+                    if (_destroyedThisBatch.Contains(ground.m_uid) || _holds.ContainsKey(ground.m_uid))
                     {
-                        hasLooseItemNearby = true;
+                        continue; // taken, or claimed, by a container earlier in this call
+                    }
+                    if ((ground.GetPosition() - position).sqrMagnitude > radiusSqr)
+                    {
+                        continue;
+                    }
+                    if (known && !cached.Names.Contains(_groundNames[i]))
+                    {
+                        continue; // held none of that type when last read, and nothing has written it since
+                    }
+                    qualifies = true;
+                    if (!busy && !overBudget)
+                    {
                         break;
                     }
+                    _groundTruncated[i] = true; // a container that never got its look wanted it, maybe
                 }
-                if (!hasLooseItemNearby)
+                if (!qualifies || busy || overBudget)
                 {
                     continue;
                 }
@@ -205,12 +388,151 @@ namespace Wonderland.Subsystems.ItemFlow
                 ProcessContainer(containerZdo);
                 processed++;
             }
+            _nearRotation += processed; // a room the cap cut short is finished over the next passes, not re-started
+
+            for (int i = 0; i < _groundItems.Count; i++)
+            {
+                ZDOID uid = _groundItems[i].m_uid;
+                if (_groundTruncated[i] || _destroyedThisBatch.Contains(uid) || _holds.ContainsKey(uid))
+                {
+                    continue; // never judged, moved, or settling - none of those is "unwanted"
+                }
+                RememberUnwanted(uid, now);
+            }
             return processed;
+        }
+
+        /// <summary>A ground ZDO that could be vacuumed at all, judged without loading anything or resolving a
+        /// prefab: a dropped item (live fish excluded, see Initialize) that is not placed as a piece or
+        /// hatching, not on VacuumExcludedItems, not moved or claimed this frame, and not one every container
+        /// in reach declined within the last UnwantedRetrySeconds. Gives back the shared item name the
+        /// match-required rule compares.</summary>
+        private static bool IsCandidateGroundItem(ZDO zdo, float now, out string itemName)
+        {
+            int prefabHash = zdo.GetPrefab();
+            if (!_itemNameByPrefab.TryGetValue(prefabHash, out itemName) || _destroyedThisBatch.Contains(zdo.m_uid) || _holds.ContainsKey(zdo.m_uid))
+            {
+                return false;
+            }
+            if (_unwantedUntil.TryGetValue(zdo.m_uid, out float until))
+            {
+                if (now < until)
+                {
+                    return false;
+                }
+                _unwantedUntil.Remove(zdo.m_uid);
+            }
+            if (IsPlacedOrHatching(zdo))
+            {
+                return false;
+            }
+            HashSet<string> excluded = ParsedList(WonderlandConfig.VacuumExcludedItems?.Value, ref _excludedItemsSource, _excludedItems);
+            return excluded.Count == 0 || !_prefabNameByHash.TryGetValue(prefabHash, out string prefabName) || !excluded.Contains(prefabName);
+        }
+
+        /// <summary>An item ZDO that is part of the world rather than loot: placed as a piece (a feast on a
+        /// table - Player.PlacePiece calls ItemDrop.MakePiece, which sets s_piece; its eaten portions live in
+        /// s_value, so vacuuming it would put a whole feast in the chest) or an egg that has started to warm
+        /// by a fire (EggGrow.GrowUpdate keeps s_growStart above zero while it can grow; an egg dropped
+        /// anywhere else reads zero and is ordinary loot).</summary>
+        private static bool IsPlacedOrHatching(ZDO zdo)
+        {
+            return zdo.GetBool(ZDOVars.s_piece) || zdo.GetFloat(ZDOVars.s_growStart) > 0f;
+        }
+
+        /// <summary>Records what the container holds at its current DataRevision (called after its load, or
+        /// after its save when it changed, so the revision on file is the one the cache is keyed to).</summary>
+        private static void RememberContainerNames(ZDO containerZdo, Inventory inventory)
+        {
+            float now = Time.time;
+            if (!_containerNames.TryGetValue(containerZdo.m_uid, out ContainerNames entry))
+            {
+                if (_containerNames.Count >= MaxContainerNameEntries)
+                {
+                    PruneContainerNames(now, force: true);
+                    if (_containerNames.Count >= MaxContainerNameEntries)
+                    {
+                        return; // this one simply loads next time
+                    }
+                }
+                entry = new ContainerNames();
+                _containerNames[containerZdo.m_uid] = entry;
+            }
+            entry.Names.Clear();
+            foreach (ItemDrop.ItemData item in inventory.GetAllItems())
+            {
+                string name = item?.m_shared?.m_name;
+                if (!string.IsNullOrEmpty(name))
+                {
+                    entry.Names.Add(name);
+                }
+            }
+            entry.Revision = containerZdo.DataRevision;
+            entry.SeenAt = now;
+        }
+
+        /// <summary>Drops entries not refreshed within ContainerNameTtlSeconds; with force, clears everything
+        /// when that still leaves the cache full (a cold cache only costs one load per chest).</summary>
+        private static void PruneContainerNames(float now, bool force)
+        {
+            if (_containerNames.Count == 0)
+            {
+                return;
+            }
+            _containerNameScratch.Clear();
+            foreach (KeyValuePair<ZDOID, ContainerNames> entry in _containerNames)
+            {
+                if (now - entry.Value.SeenAt > ContainerNameTtlSeconds)
+                {
+                    _containerNameScratch.Add(entry.Key);
+                }
+            }
+            for (int i = 0; i < _containerNameScratch.Count; i++)
+            {
+                _containerNames.Remove(_containerNameScratch[i]);
+            }
+            if (force && _containerNames.Count >= MaxContainerNameEntries)
+            {
+                _containerNames.Clear();
+            }
+        }
+
+        private static void RememberUnwanted(ZDOID uid, float now)
+        {
+            if (_unwantedUntil.Count >= MaxUnwantedEntries && !_unwantedUntil.ContainsKey(uid))
+            {
+                PruneUnwanted(now);
+                if (_unwantedUntil.Count >= MaxUnwantedEntries)
+                {
+                    return; // still full: this one simply costs a look next pass
+                }
+            }
+            _unwantedUntil[uid] = now + UnwantedRetrySeconds;
+        }
+
+        private static void PruneUnwanted(float now)
+        {
+            if (_unwantedUntil.Count == 0)
+            {
+                return;
+            }
+            _unwantedScratch.Clear();
+            foreach (KeyValuePair<ZDOID, float> entry in _unwantedUntil)
+            {
+                if (now >= entry.Value)
+                {
+                    _unwantedScratch.Add(entry.Key);
+                }
+            }
+            for (int i = 0; i < _unwantedScratch.Count; i++)
+            {
+                _unwantedUntil.Remove(_unwantedScratch[i]);
+            }
         }
 
         private static void ProcessContainer(ZDO containerZdo)
         {
-            if (!containerZdo.IsValid() || ZdoInventoryIO.IsBusy(containerZdo))
+            if (ZNetScene.instance == null || !containerZdo.IsValid() || ZdoInventoryIO.IsBusy(containerZdo))
             {
                 return;
             }
@@ -236,46 +558,88 @@ namespace Wonderland.Subsystems.ItemFlow
             }
 
             bool changed = false;
-
-            // Overflow guard rides this same pass - every container Wonderland already has open gets
-            // checked, on a short regular interval, well before any real client could load it.
-            float linkRadius = WonderlandConfig.ContainerLinkRadius?.Value ?? 10f;
-            if (GridGrowth.EnforceOverflow(containerZdo, inventory, prefab, template, linkRadius, out bool siblingChanged, out ZDO siblingZdo))
-            {
-                changed = true;
-                if (siblingChanged && siblingZdo != null)
-                {
-                    // sibling's own inventory object was already saved inside EnforceOverflow
-                }
-            }
-
-            // Try draining any previously overflowed items from ItemCache into this container
-            changed |= ItemCache.TryDrainInto(containerZdo, inventory);
-
             bool vacuumed = false;
-            if (inventory.NrOfItems() > 0)
+            bool rowsEligible = ContainerRows.IsEnabled && ContainerRows.IsEligible(prefab, template);
+            int vanillaHeight = rowsEligible ? GridGrowth.GetVanillaSize(prefabName, template).height : 0;
+            int movedBefore = _stacksMoved;
+            try
             {
-                vacuumed = VacuumGroundItemsInto(containerZdo, inventory, prefabHash);
-                changed |= vacuumed;
+                // Overflow guard rides this same pass - every container Wonderland already has open gets
+                // checked, on a short regular interval, well before any real client could load it. Its
+                // sibling save and cache store are committed inside the call, so this container's own write
+                // follows at once: nothing that can throw on foreign data sits between the two.
+                float linkRadius = WonderlandConfig.ContainerLinkRadius?.Value ?? 10f;
+                if (GridGrowth.EnforceOverflow(containerZdo, inventory, prefab, template, linkRadius, out bool _, out ZDO _))
+                {
+                    changed = true;
+                    Commit(containerZdo, inventory, rowsEligible, vanillaHeight, height);
+                }
+
+                if (inventory.NrOfItems() > 0)
+                {
+                    vacuumed = VacuumGroundItemsInto(containerZdo, inventory, prefabHash);
+                    changed |= vacuumed;
+                }
+
+                // The cache drain removes from the cache (and writes its file) inside the call, so it sits
+                // directly before the write that keeps its items; the ground stacks - the one input that can
+                // be malformed - were all read above.
+                if (ItemCache.TryDrainInto(containerZdo, inventory))
+                {
+                    changed = true;
+                }
+
+                if (changed)
+                {
+                    Commit(containerZdo, inventory, rowsEligible, vanillaHeight, height);
+                }
+                RememberContainerNames(containerZdo, inventory);
+            }
+            catch (System.Exception ex)
+            {
+                // The container write did not happen, so the ground stacks queued behind it are still the
+                // only copies: forget the queue WITHOUT destroying anything (a finally-flush would do the
+                // opposite) and do not count them as moved. Stacks this call had already claimed stay held;
+                // ProcessMaturedHolds hands them back. The frame's other engines carry on.
+                for (int i = 0; i < _pendingGroundDestroy.Count; i++)
+                {
+                    _recentlyMoved.Remove(_pendingGroundDestroy[i].m_uid);
+                }
+                _pendingGroundDestroy.Clear();
+                _stacksMoved = movedBefore;
+                WarnVacuumRateLimited($"[Vacuum] {prefabName} at {containerZdo.GetPosition()} skipped this pass: {ex.GetType().Name}: {ex.Message}");
+                return;
             }
 
-            if (changed && ContainerRows.IsEnabled && ContainerRows.IsEligible(prefab, template))
-            {
-                // Already committing this chest - make the same write leave its grown rows visible.
-                ContainerRows.EnsureAnchor(inventory, GridGrowth.GetVanillaSize(prefabName, template).height, height, out _);
-            }
+            // The ground copies go the moment the chest is committed; the splash comes after, so a hiccup in
+            // the effect can never leave a stack both in the chest and on the ground.
+            FlushPendingGroundDestroy();
 
-            if (changed)
+            if (vacuumed && _effectsThisFrame.Add(containerZdo.m_uid))
             {
-                ZdoInventoryIO.Save(containerZdo, inventory);
-            }
-
-            if (vacuumed)
-            {
+                // One splash per chest per frame, however many sub-passes fed it.
                 PlayVacuumEffect(containerZdo.GetPosition());
             }
+        }
 
-            FlushPendingGroundDestroy();
+        /// <summary>The container's write, with its grown rows kept visible when ContainerRows applies.</summary>
+        private static void Commit(ZDO containerZdo, Inventory inventory, bool rowsEligible, int vanillaHeight, int height)
+        {
+            if (rowsEligible)
+            {
+                ContainerRows.EnsureAnchor(inventory, vanillaHeight, height, out _);
+            }
+            ZdoInventoryIO.Save(containerZdo, inventory);
+        }
+
+        private static void WarnVacuumRateLimited(string message)
+        {
+            if (Time.time - _lastVacuumWarning < TriggerWarningIntervalSeconds)
+            {
+                return;
+            }
+            _lastVacuumWarning = Time.time;
+            WonderlandDebug.LogWarning(message);
         }
 
         // === Visual & Audio feedback ===
@@ -371,12 +735,41 @@ namespace Wonderland.Subsystems.ItemFlow
             _pendingGroundDestroy.Clear();
         }
 
+        // === The settle step (0.8.4) ===
+        //
+        // A stack a client owns is never moved in the pass that finds it. Vanilla's pickup is entirely
+        // client-side: Humanoid.Pickup (1.0.12 server decompile 7397-7455) adds the stack to the inventory
+        // and only then ZNetScene.Destroy -> ZDOMan.DestroyZDO sends the ZDO's destruction; the server
+        // learns of a pickup one trip late and cannot veto it. If the server moved the same stack into a
+        // chest inside that trip - a couple of hundred milliseconds either side of the pickup - the player
+        // keeps theirs and the chest has a copy. At the half-minute cadence of 0.8.2 that overlap was a
+        // fluke; the near-player pass of 0.8.3 moves a drop within a second of landing, which is exactly
+        // when the player who dropped it, or killed for it, is standing on it with auto-pickup running.
+        //
+        // So the server first takes the ZDO (SetOwner + DataRevision += 4096 + ForceSendZDO, the same
+        // three writes WaterBuoyancyEngine uses to hold an item at the surface: the revision jump makes any
+        // position packet the client already had in flight arrive stale, since RPC_ZDOData applies a
+        // packet's owner field unconditionally whenever its data revision is newer) and lets it settle
+        // for HoldSeconds. Once the client has the new owner, ItemDrop.CanPickup (70558) is false for it,
+        // so it can no longer pick up at all; a pickup it committed before it heard comes back as its
+        // DestroyZDO and the ZDO is gone by the time the hold matures. A player who wants it meanwhile
+        // asks the owner - the server - with RPC_RequestOwn; WaterBuoyancyEngine.HandlePickupRequest grants
+        // it (with a 3 s grace the SetOwner prefix and this code both respect), and at maturity the stack
+        // is no longer the server's and is left alone: the player wins every tie. Vanilla's own passive
+        // hand-out, ZDOMan.ReleaseNearbyZDOS (every 2 s, gives server-owned ZDOs near a player to that
+        // player), is blocked for a held stack through the same prefix, or one hold in four would be
+        // broken for nothing. Stacks born on the server - a sweep's drops, a floating item - are moved
+        // at once: no client can be mid-pickup on a ZDO it does not own, and a grant made later in this
+        // frame is refused because HandlePickupRequest checks WasMovedThisFrame.
+
         /// <summary>Match-required: only tops up an item type the container already holds at least one of.</summary>
         private static bool VacuumGroundItemsInto(ZDO containerZdo, Inventory inventory, int containerPrefabHash)
         {
             float radius = WonderlandConfig.VacuumRadius?.Value ?? 10f;
             List<ZDO> nearby = ZdoSpatialQuery.FindNear(containerZdo.GetPosition(), radius);
             bool changed = false;
+            float now = Time.time;
+            long session = ZDOMan.GetSessionID();
 
             foreach (ZDO groundZdo in nearby)
             {
@@ -384,12 +777,16 @@ namespace Wonderland.Subsystems.ItemFlow
                 {
                     continue;
                 }
-                GameObject groundPrefab = ZNetScene.instance.GetPrefab(groundZdo.GetPrefab());
-                if (groundPrefab == null || groundPrefab.GetComponent<ItemDrop>() == null)
+                if (!_itemDropPrefabHashes.Contains(groundZdo.GetPrefab()) || IsPlacedOrHatching(groundZdo))
                 {
-                    continue;
+                    continue; // not loot: a live fish (see Initialize), a placed feast, an egg by the fire
                 }
-                if (IsItemExcluded(groundPrefab.name))
+                if (_holds.TryGetValue(groundZdo.m_uid, out GroundHold settling) && now < settling.Until)
+                {
+                    continue; // claimed and still settling - nothing to load for it yet
+                }
+                GameObject groundPrefab = ZNetScene.instance.GetPrefab(groundZdo.GetPrefab());
+                if (groundPrefab == null || IsItemExcluded(groundPrefab.name))
                 {
                     continue;
                 }
@@ -404,13 +801,22 @@ namespace Wonderland.Subsystems.ItemFlow
                     continue;
                 }
                 var groundItem = new ItemDrop.ItemData();
-                ItemDrop.LoadFromZDO(groundItem, groundZdo);
-                groundItem.m_dropPrefab = groundPrefab;
-                groundItem.m_shared = dropTemplate.m_itemData.m_shared;
-
-                if (!ItemSanityGuard.IsPlausible(groundItem, out string rejectReason))
+                try
                 {
-                    ItemLedger.RecordRejection(VacuumTag, groundItem.m_shared.m_name, groundItem.m_stack, rejectReason);
+                    ItemDrop.LoadFromZDO(groundItem, groundZdo);
+                    groundItem.m_dropPrefab = groundPrefab;
+                    groundItem.m_shared = dropTemplate.m_itemData.m_shared;
+                    if (!ItemSanityGuard.IsPlausible(groundItem, out string rejectReason))
+                    {
+                        ItemLedger.RecordRejection(VacuumTag, groundItem.m_shared.m_name, groundItem.m_stack, rejectReason);
+                        continue;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    // One malformed stack must not keep this chest from ever being vacuumed again.
+                    RememberUnwanted(groundZdo.m_uid, now);
+                    WarnVacuumRateLimited($"[Vacuum] skipped a {groundPrefab.name} at {groundZdo.GetPosition()}: {ex.GetType().Name}: {ex.Message}");
                     continue;
                 }
 
@@ -432,8 +838,13 @@ namespace Wonderland.Subsystems.ItemFlow
                 // the difference outright.
                 if (!inventory.CanAddItem(groundItem, stackOnGround))
                 {
-                    ItemLedger.RecordRejection(VacuumTag, groundItem.m_shared.m_name, stackOnGround, "container full - left on the ground");
+                    RecordFullOnce(containerZdo.m_uid, groundItem.m_shared.m_name, stackOnGround, now);
                     continue;
+                }
+
+                if (!TryTakeOwnership(groundZdo, containerZdo, now, session))
+                {
+                    continue; // claimed just now, or a player got it first
                 }
 
                 string itemName = groundItem.m_shared.m_name;
@@ -460,31 +871,364 @@ namespace Wonderland.Subsystems.ItemFlow
                 }
 
                 changed = true;
+                _stacksMoved++;
                 _destroyedThisBatch.Add(groundZdo.m_uid);
                 _pendingGroundDestroy.Add(groundZdo);
+                _recentlyMoved[groundZdo.m_uid] = new MovedStack(containerZdo.m_uid, itemName, stackOnGround, now);
                 ItemLedger.RecordTransfer(VacuumTag, groundItem.m_shared.m_name, stackOnGround);
             }
 
             return changed;
         }
 
-        private static bool IsContainerExcluded(string prefabName) => MatchesList(WonderlandConfig.VacuumExcludedContainers?.Value, prefabName);
-        private static bool IsItemExcluded(string prefabName) => MatchesList(WonderlandConfig.VacuumExcludedItems?.Value, prefabName);
-
-        private static bool MatchesList(string list, string prefabName)
+        /// <summary>A full chest beside a pile used to say so for every stack, every pass. Once per chest and
+        /// item type per FullLogIntervalSeconds is what an operator needs; the ledger sees the same line.</summary>
+        private static void RecordFullOnce(ZDOID container, string itemName, int amount, float now)
         {
-            if (string.IsNullOrWhiteSpace(list))
+            if (now - _fullLoggedClearedAt >= FullLogIntervalSeconds)
             {
-                return false;
+                _fullLogged.Clear();
+                _fullLoggedClearedAt = now;
             }
-            foreach (string entry in list.Split(','))
+            if (_fullLogged.Add((container, itemName)))
             {
-                if (string.Equals(entry.Trim(), prefabName, System.StringComparison.OrdinalIgnoreCase))
+                ItemLedger.RecordRejection(VacuumTag, itemName, amount, "container full - left on the ground");
+            }
+        }
+
+        /// <summary>The settle step (section note above). True when the stack is the server's to move now.
+        /// Otherwise it has just been claimed and will be looked at again when the hold matures
+        /// (ProcessMaturedHolds calls this container again), or a player has it.</summary>
+        private static bool TryTakeOwnership(ZDO groundZdo, ZDO containerZdo, float now, long session)
+        {
+            ZDOID uid = groundZdo.m_uid;
+            bool ours = groundZdo.GetOwner() == session;
+            if (_holds.TryGetValue(uid, out GroundHold hold))
+            {
+                if (now < hold.Until)
+                {
+                    return false;
+                }
+                _holds.Remove(uid);
+                // Not ours any more: a player asked for it while it settled (or a stale packet from a still
+                // sliding stack beat the claim - the next pass claims it again, at rest). Either way, not now.
+                return ours;
+            }
+            if (WaterBuoyancyEngine.HasPickupGrace(uid))
+            {
+                return false; // a player is picking it up right now
+            }
+            if (ours)
+            {
+                // Server-owned means no client can be mid-pickup - once the server's ownership is older than
+                // one delivery. A ZDO minted by this server session (a sweep's drop: CreateNewZDO stamps the
+                // session id into the ZDOID) never had a client owner. One WaterBuoyancy took from a client
+                // within the last hold's worth of time may not have landed on that client yet, so it gets the
+                // same settle time without a second claim.
+                if (uid.UserID == session || !WaterBuoyancyEngine.ClaimedWithin(uid, HoldSeconds))
                 {
                     return true;
                 }
+                _holds[uid] = new GroundHold(now + HoldSeconds, containerZdo.m_uid);
+                return false;
             }
+
+            long previousOwner = groundZdo.GetOwner();
+            groundZdo.SetOwner(session);
+            groundZdo.DataRevision += 4096;
+            groundZdo.Set(ZDOVars.s_velHash, Vector3.zero);
+            groundZdo.Set(ZDOVars.s_bodyVelHash, Vector3.zero);
+            groundZdo.Set(ZDOVars.s_bodyAVelHash, Vector3.zero);
+            // The previous owner is the one client that must hear now; everyone else picks the new owner up
+            // on their next regular send (the revision rose).
+            ZDOMan.instance.ForceSendZDO(previousOwner, uid);
+            _holds[uid] = new GroundHold(now + HoldSeconds, containerZdo.m_uid);
             return false;
+        }
+
+        /// <summary>Every frame: a hold that matured gets its container one more look right away (not on the
+        /// next pass - that would add a whole VacuumInterval to every drop). A stack still held after that
+        /// look (chest full or open, item excluded meanwhile, container gone) is handed back to the nearest
+        /// player and rests as unwanted for a few seconds, so nothing is ever left frozen.</summary>
+        private static void ProcessMaturedHolds()
+        {
+            if (_holds.Count == 0 || ZDOMan.instance == null)
+            {
+                return;
+            }
+
+            float now = Time.time;
+            _holdScratch.Clear();
+            foreach (KeyValuePair<ZDOID, GroundHold> entry in _holds)
+            {
+                if (now >= entry.Value.Until)
+                {
+                    _holdScratch.Add(entry.Key);
+                }
+            }
+            if (_holdScratch.Count == 0)
+            {
+                return;
+            }
+
+            _holdContainersThisFrame.Clear();
+            int budget = MaxHoldContainersPerFrame;
+            for (int i = 0; i < _holdScratch.Count; i++)
+            {
+                ZDOID uid = _holdScratch[i];
+                if (!_holds.TryGetValue(uid, out GroundHold hold))
+                {
+                    continue; // consumed by a container processed earlier in this loop
+                }
+                ZDO ground = ZDOMan.instance.GetZDO(uid);
+                if (ground == null || !ground.IsValid())
+                {
+                    _holds.Remove(uid); // picked up before the claim reached its client - theirs, and gone
+                    continue;
+                }
+                ZDO container = ZDOMan.instance.GetZDO(hold.Container);
+                if (container == null || !container.IsValid())
+                {
+                    ReleaseHold(uid, ground, now);
+                    continue;
+                }
+                if (budget <= 0)
+                {
+                    if (now >= hold.Until + HoldHardExpirySeconds)
+                    {
+                        ReleaseHold(uid, ground, now);
+                    }
+                    continue; // next frame
+                }
+                if (_holdContainersThisFrame.Add(hold.Container))
+                {
+                    budget--;
+                    ProcessContainer(container); // VacuumGroundItemsInto consumes every matured hold of this chest
+                }
+                if (_holds.ContainsKey(uid))
+                {
+                    ReleaseHold(uid, ground, now);
+                }
+            }
+        }
+
+        private static void ReleaseHold(ZDOID uid, ZDO ground, float now)
+        {
+            _holds.Remove(uid);
+            HandBack(ground);
+            RememberUnwanted(uid, now);
+        }
+
+        /// <summary>Gives a stack the server claimed back to the nearest connected player (vanilla's own
+        /// ReleaseNearbyZDOS would do the same within 2 s; this just does not leave it frozen that long), or
+        /// leaves it unowned for that pass to assign when nobody is near.</summary>
+        private static void HandBack(ZDO ground)
+        {
+            if (ground.GetOwner() != ZDOMan.GetSessionID())
+            {
+                return; // someone already has it
+            }
+            long to = TryFindNearestPlayer(ground.GetPosition(), 96f, out ConnectedCharacter nearest) ? nearest.Peer.m_uid : 0L;
+            ground.SetOwner(to);
+            if (to != 0L)
+            {
+                ZDOMan.instance.ForceSendZDO(to, ground.m_uid);
+            }
+        }
+
+        private static void ReleaseAllHolds()
+        {
+            if (ZDOMan.instance == null)
+            {
+                _holds.Clear();
+                return;
+            }
+            _holdScratch.Clear();
+            _holdScratch.AddRange(_holds.Keys);
+            _holds.Clear();
+            for (int i = 0; i < _holdScratch.Count; i++)
+            {
+                ZDO ground = ZDOMan.instance.GetZDO(_holdScratch[i]);
+                if (ground != null && ground.IsValid())
+                {
+                    HandBack(ground);
+                }
+            }
+        }
+
+        /// <summary>For the ZDO.SetOwner prefix in WaterBuoyancyEngine: while a stack settles, vanilla's
+        /// passive ReleaseNearbyZDOS must not hand it to a nearby player (that would reopen the very window
+        /// the hold closes, one pass in four). A player who asks for it goes through HandlePickupRequest,
+        /// which sets its grace before calling SetOwner, so that path is let through; so is anything once
+        /// the hold is stale, so an entry can never wedge an item.</summary>
+        public static bool ShouldBlockOwnerChange(ZDO zdo, long targetUid)
+        {
+            if (zdo == null || (_holds.Count == 0 && _destroyedThisBatch.Count == 0) || targetUid == ZDOMan.GetSessionID())
+            {
+                return false;
+            }
+            if (_destroyedThisBatch.Contains(zdo.m_uid))
+            {
+                // Moved this frame, destroy queued: ReleaseNearbyZDOS must not hand it to a peer in the send
+                // that precedes the destroy (ZDOMan.Update sends ZDOs before SendDestroyed).
+                return true;
+            }
+            if (!_holds.TryGetValue(zdo.m_uid, out GroundHold hold) || Time.time >= hold.Until + HoldHardExpirySeconds)
+            {
+                return false;
+            }
+            return !WaterBuoyancyEngine.HasPickupGrace(zdo.m_uid);
+        }
+
+        /// <summary>True for a ground stack this frame's passes already moved into a container (its DestroyZDO
+        /// is queued, not yet sent). HandlePickupRequest refuses to grant such a stack to a player.</summary>
+        public static bool WasMovedThisFrame(ZDOID uid)
+        {
+            return _destroyedThisBatch.Contains(uid);
+        }
+
+        /// <summary>True while the settle step holds this stack for a container.</summary>
+        public static bool IsHeld(ZDOID uid)
+        {
+            return _holds.ContainsKey(uid);
+        }
+
+        /// <summary>
+        /// Called by LatePickupPatch for every "DestroyZDO" batch a client sends. Only an owner can send one,
+        /// and after the claim a client is not the owner unless the claim never reached it in time - so a
+        /// client's destroy for a stack this engine moved within the last RecentMoveSeconds means that client
+        /// committed a pickup (or a stack merge) before it heard: the player has the items, and the container
+        /// gives its copy back. The one signal the protocol's timing assumption can be checked against, and
+        /// what makes the hold length a latency knob rather than a correctness one.
+        /// </summary>
+        public static void OnClientDestroy(long sender, ZPackage pkg)
+        {
+            if (_recentlyMoved.Count == 0 || pkg == null || ZDOMan.instance == null || sender == ZDOMan.GetSessionID())
+            {
+                return;
+            }
+            int pos = pkg.GetPos();
+            try
+            {
+                pkg.SetPos(0);
+                int count = pkg.ReadInt();
+                for (int i = 0; i < count && i < 4096; i++)
+                {
+                    ZDOID uid = pkg.ReadZDOID();
+                    if (_recentlyMoved.TryGetValue(uid, out MovedStack moved))
+                    {
+                        _recentlyMoved.Remove(uid);
+                        TakeBack(moved, sender);
+                    }
+                }
+            }
+            finally
+            {
+                pkg.SetPos(pos);
+            }
+        }
+
+        private static void TakeBack(MovedStack moved, long sender)
+        {
+            string who = ZNet.instance?.GetPeer(sender)?.m_playerName ?? $"peer {sender}";
+            ZDO container = ZDOMan.instance.GetZDO(moved.Container);
+            if (container == null || !container.IsValid() || ZNetScene.instance == null)
+            {
+                WonderlandDebug.LogWarning($"[Vacuum] '{who}' picked up {moved.Stack}x {moved.ItemName} as a chest took it, and that chest is gone - the copy could not be taken back.");
+                return;
+            }
+            if (ZdoInventoryIO.IsBusy(container))
+            {
+                _pendingTakeBacks.Add(moved); // someone has it open; retried every frame for TakeBackRetrySeconds
+                return;
+            }
+            GameObject prefab = ZNetScene.instance.GetPrefab(container.GetPrefab());
+            Container template = ContainerRegistry.ResolveTemplate(prefab);
+            if (template == null)
+            {
+                return;
+            }
+            (int width, int height) = ContainerRows.GetGridSize(prefab, template);
+            Inventory inventory = ZdoInventoryIO.Load(container, width, height);
+            if (inventory == null)
+            {
+                _pendingTakeBacks.Add(moved);
+                return;
+            }
+            int take = Mathf.Min(inventory.CountItems(moved.ItemName), moved.Stack);
+            if (take > 0)
+            {
+                inventory.RemoveItem(moved.ItemName, take);
+                bool rowsEligible = ContainerRows.IsEnabled && ContainerRows.IsEligible(prefab, template);
+                Commit(container, inventory, rowsEligible, rowsEligible ? GridGrowth.GetVanillaSize(prefab.name, template).height : 0, height);
+                RememberContainerNames(container, inventory);
+            }
+            ItemLedger.RecordRejection(VacuumTag, moved.ItemName, take, $"'{who}' picked it up first - taken back out of the chest ({take} of {moved.Stack} still there)");
+        }
+
+        private static void ProcessPendingTakeBacks()
+        {
+            float now = Time.time;
+            for (int i = _pendingTakeBacks.Count - 1; i >= 0; i--)
+            {
+                MovedStack moved = _pendingTakeBacks[i];
+                _pendingTakeBacks.RemoveAt(i);
+                if (now - moved.At > TakeBackRetrySeconds)
+                {
+                    WonderlandDebug.LogWarning($"[Vacuum] gave up taking {moved.Stack}x {moved.ItemName} back out of a chest that stayed open for {TakeBackRetrySeconds:0} s - a player kept that stack too.");
+                    continue;
+                }
+                TakeBack(moved, 0L); // re-adds itself while the chest stays busy
+            }
+        }
+
+        private static void PruneRecentlyMoved(float now)
+        {
+            if (_recentlyMoved.Count == 0)
+            {
+                return;
+            }
+            _movedScratch.Clear();
+            foreach (KeyValuePair<ZDOID, MovedStack> entry in _recentlyMoved)
+            {
+                if (now - entry.Value.At > RecentMoveSeconds)
+                {
+                    _movedScratch.Add(entry.Key);
+                }
+            }
+            for (int i = 0; i < _movedScratch.Count; i++)
+            {
+                _recentlyMoved.Remove(_movedScratch[i]);
+            }
+        }
+
+        private static bool IsContainerExcluded(string prefabName) =>
+            ParsedList(WonderlandConfig.VacuumExcludedContainers?.Value, ref _excludedContainersSource, _excludedContainers).Contains(prefabName);
+        private static bool IsItemExcluded(string prefabName) =>
+            ParsedList(WonderlandConfig.VacuumExcludedItems?.Value, ref _excludedItemsSource, _excludedItems).Contains(prefabName);
+
+        /// <summary>The comma list as a set, re-split only when the config string changes (hot reload hands
+        /// out a new string; until then the same instance comes back and the check is a reference compare).
+        /// Called per ground item per pass now, so no per-call Split.</summary>
+        private static HashSet<string> ParsedList(string list, ref string cachedSource, HashSet<string> cache)
+        {
+            if (!ReferenceEquals(list, cachedSource) && !string.Equals(list, cachedSource, System.StringComparison.Ordinal))
+            {
+                cache.Clear();
+                if (!string.IsNullOrWhiteSpace(list))
+                {
+                    foreach (string entry in list.Split(','))
+                    {
+                        string trimmed = entry.Trim();
+                        if (trimmed.Length > 0)
+                        {
+                            cache.Add(trimmed);
+                        }
+                    }
+                }
+                cachedSource = list;
+            }
+            return cache;
         }
 
         // === Auto-harvest ===
@@ -685,12 +1429,11 @@ namespace Wonderland.Subsystems.ItemFlow
         /// (Carrot), which is what the vacuum side of the same list already matches on.</summary>
         private static bool IsPickableExcluded(GameObject prefab, Pickable template)
         {
-            string list = WonderlandConfig.VacuumExcludedItems?.Value;
-            if (MatchesList(list, prefab.name))
+            if (IsItemExcluded(prefab.name))
             {
                 return true;
             }
-            return template.m_itemPrefab != null && MatchesList(list, template.m_itemPrefab.name);
+            return template.m_itemPrefab != null && IsItemExcluded(template.m_itemPrefab.name);
         }
 
         private static bool IsConnectedPeer(long peerId)
@@ -788,14 +1531,19 @@ namespace Wonderland.Subsystems.ItemFlow
                 }
                 if (swept > 0)
                 {
-                    WonderlandDebug.LogInfo($"[AutoHarvest] {prefab.name} picked by '{trigger.PickerName}' - swept {swept} more within {radius:0} m.");
+                    int fed = 0;
                     if (WonderlandConfig.VacuumEnabled?.Value == true)
                     {
                         // The drops exist as ZDOs the moment DropItem returns, so a matching chest in range
                         // takes them now rather than on the next pass - "one keypress, the chest fills".
+                        // Born on the server, they skip the settle step (no client has ever owned them).
+                        int movedBefore = _stacksMoved;
                         BeginVacuumPass();
                         VacuumAround(trigger.Position, radius, WonderlandConfig.VacuumRadius?.Value ?? 10f);
+                        fed = _stacksMoved - movedBefore;
                     }
+                    string chest = fed > 0 ? $", {fed} stack{(fed == 1 ? "" : "s")} into a chest" : "";
+                    WonderlandDebug.LogInfo($"[AutoHarvest] {prefab.name} picked by '{trigger.PickerName}' - swept {swept} more within {radius:0.#} m{chest}.");
                 }
                 if (swept >= MaxHarvestsPerSweep && _pendingTriggers.Count < MaxPendingTriggers)
                 {

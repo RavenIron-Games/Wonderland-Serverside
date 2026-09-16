@@ -20,7 +20,7 @@ namespace Wonderland
     {
         public const string ModGUID = "wubarrk.wonderland";
         public const string ModName = "Wonderland";
-        public const string ModVersion = "0.8.3";
+        public const string ModVersion = "0.8.4";
 
         private const float ConfigPollInterval = 5f;
 

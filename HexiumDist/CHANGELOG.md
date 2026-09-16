@@ -1,5 +1,136 @@
 # Changelog
 
+## 0.8.4
+
+### Fixed
+- **A stack could be duplicated when a player picked it up in the same instant a chest vacuumed it.** Vanilla decides a
+  pickup on the player's own client and tells the server afterwards; if the vacuum moved that stack into a chest inside
+  that round trip, the player kept theirs and the chest had a copy. At 0.8.2's half-minute cadence that was a fluke.
+  0.8.3's near-player pass moved a drop within a second of landing - exactly when the player who dropped it, or killed
+  for it, is standing on it with auto-pickup running - so it became likely. Now a stack a player owns is first claimed by
+  the server and only moved a second later, and only if no player asked for it in between: a player who reaches for it
+  wins every tie, a player who asked but could not carry it (full inventory) does not block the chest, and a stack the
+  chest cannot take after all is handed straight back. Should a pickup still slip through under heavy lag, the player's
+  own late "destroyed" message is recognised and the copy is taken back out of the chest, logged. Stacks the server
+  itself created (an auto-harvest sweep's drops) still go into the chest the instant they land.
+- **Swimming fish counted as ground items.** A live fish carries the same item component as a dropped one, so any fish
+  within `VacuumNearPlayersRadius` kept every chest near the shore loading each pass, and a chest that held that fish
+  type could pull a live fish out of the water. Fish are left alone everywhere now, the same exception the buoyancy
+  feature already made.
+- **A feast on a table, or an egg warming by the fire, could be vacuumed.** Both are item objects placed in the world;
+  a chest within `VacuumRadius` holding one more of the same pulled them in - the half-eaten feast came back whole.
+  Placed item-pieces and hatching eggs are never touched now (an egg dropped anywhere else still is loot).
+- **One stack nobody wanted loaded every chest in reach, every pass.** A trophy on the floor, an excluded item, anything
+  no nearby chest already holds: the near-player pass loaded and checked every container within `VacuumRadius` of it
+  every `VacuumInterval`, forever - and adding an item to `VacuumExcludedItems` made it *more* expensive, not less. Now
+  the pass remembers what each chest held the last time it was read and only opens a chest that has changed since or
+  that already holds the item type lying near it; excluded items never qualify a chest; a stack every container in
+  reach declined rests 5 seconds before it is looked at again; a stack already moved no longer qualifies the remaining
+  containers of the same pass; and one pass loads at most 32 containers per player, continuing where it stopped on the
+  next pass. With junk on the floor and nobody touching the chests, the steady state is zero chest loads.
+- **"container full" was logged for every stack, every pass.** Once per chest and item type per minute now.
+- Smaller: a container write that fails mid-pass can no longer destroy the ground stacks queued behind it, nor lose a
+  sibling-overflow or cache-drain transfer that had already been committed; a malformed ground stack no longer stops a
+  chest from being vacuumed at all; the splash effect plays at most once per chest per frame; a claimed stack whose
+  chest never got its look is handed back within three seconds, so nothing is ever left frozen on the ground; a chest
+  someone has open does not "judge" the stacks around it.
+
+### Changed
+- The `[AutoHarvest] ... swept N more within R m` line ends with `, N stacks into a chest` when the drops went in at
+  once, and R now shows a decimal (`4.5 m`, not `5 m`).
+- One `[Vacuum] tracking N container and M item prefab types.` line at world load.
+- The `[WaterBuoyancy] Granted pickup ownership` line is verbose-only now: with the settle step it fires for every
+  stack a player reaches for beside a chest that also wants it.
+- Known residual, documented rather than hidden: a manual E press inside the ~100 ms before the claim reaches the client,
+  by a player whose inventory can take only *part* of the stack, leaves that part duplicated (the client's reduced
+  count is the one packet the claim has to discard). Auto-pickup is not affected. One E press can also be swallowed
+  during the settle second - vanilla's own retry picks it up a moment later.
+
+### Reference (the data behind the 0.8.4 entry)
+
+**The settle step** (`Subsystems/ItemFlow/VacuumEngine.cs`: section note above `VacuumGroundItemsInto`,
+`TryTakeOwnership`, `ProcessMaturedHolds`, `ReleaseHold`, `HandBack`, `ReleaseAllHolds`, `ShouldBlockOwnerChange`,
+`WasMovedThisFrame`, `IsHeld`, `OnClientDestroy`, `TakeBack`; `Subsystems/ItemFlow/LatePickupPatch.cs` (new);
+`Subsystems/ItemFlow/WaterBuoyancyEngine.cs`: `HandlePickupRequest`, `HasPickupGrace`, `ClaimedWithin`,
+`ZdoSetOwnerPatch`; registered in `ItemFlowSubsystem.Initialize`)
+- Decompile facts (1.0.12 server): `Humanoid.Pickup` (7397) requires `ItemDrop.CanPickup` (70558: owner, and 0.5 s past
+  spawn), adds the stack to the inventory, then `ZNetScene.Destroy` -> `ZDOMan.DestroyZDO` (76929: owner only).
+  `Player.AutoPickup` (11154) calls `ItemDrop.RequestOwn` (70481; retry 0.2 s doubling to 30 s) *before* it checks room
+  or weight. `ZDOMan.RPC_ZDOData` applies a packet's owner field unconditionally when the packet's data revision is
+  newer than the local copy, and only on a higher owner revision when it is not. `ZDOMan.SendZDOToPeers2` (76837)
+  waits 50 ms and then serves one peer per frame; `SendZDOs` sends nothing to a peer whose socket queue is saturated.
+  `ZDOMan.ReleaseNearbyZDOS` (every 2 s) gives a server-owned ZDO inside a player's active area to that player, and
+  `ZDOMan.Update` sends ZDOs before `SendDestroyed`. `ItemDrop.AutoStackItems` (70322) only runs with more than 200
+  item instances loaded on that client. `CreateNewZDO` stamps the server's session id into every ZDOID it mints.
+- For a ground stack whose owner is not the server, and only once the chest has passed every check including
+  `CanAddItem`: `SetOwner(server)`, `DataRevision += 4096` (an in-flight packet from the client arrives stale),
+  `s_velHash` / `s_bodyVelHash` / `s_bodyAVelHash` zeroed, `ForceSendZDO(previousOwner, uid)` - the same writes
+  WaterBuoyancy uses to hold an item at the surface - and an entry in `_holds` (`Until = now + HoldSeconds` = 1 s, the
+  container's ZDOID). Not moved in this pass. Every frame `ProcessMaturedHolds` gives each matured hold's container one
+  `ProcessContainer` (at most `MaxHoldContainersPerFrame` = 8 per frame); `TryTakeOwnership` then moves the stack only
+  if the owner is still the server. Otherwise - a player asked for it with `RPC_RequestOwn` and `HandlePickupRequest`
+  granted it, or a stale packet from a still-moving stack beat the claim - it is left alone (the next pass claims a
+  still-present stack again, at rest). A stack still held after that look (chest full, chest open, item excluded
+  meanwhile, container gone) goes to `ReleaseHold`: handed back to the nearest connected player within 96 m (else
+  owner 0) and memoised as unwanted for 5 s. A hold whose container never got its look (per-frame budget) is released
+  `HoldHardExpirySeconds` = 3 s after maturity. `VacuumEnabled = false` releases every hold at once.
+- Fast path: a server-owned stack is moved in the same pass when its ZDOID was minted by this server session (a sweep's
+  drop never had a client owner) or WaterBuoyancy took it from a client more than `HoldSeconds` ago
+  (`WaterBuoyancyEngine.ClaimedWithin`); a fresher buoyancy claim gets the same settle time without a second claim.
+- `HandlePickupRequest`: refuses to grant a stack in `_destroyedThisBatch` (`VacuumEngine.WasMovedThisFrame`, cleared
+  at the top of `VacuumEngine.OnUpdate`, so the refusal holds in either Unity ordering of `ZNet.Update` and the plugin's
+  update); refuses a stack the same peer was granted more than 3 s ago that still exists while
+  `VacuumEngine.IsHeld` (the player could not take it - the client's own retry backoff outlasts the hold, the chest
+  wins); when the requester already owns the stack according to the server, bumps the owner revision and re-sends it to
+  that peer so a copy that disagrees learns (a stack nobody simulates otherwise). Grants are remembered 60 s.
+- `ZdoSetOwnerPatch` (the existing `ZDO.SetOwner` prefix) now also asks `VacuumEngine.ShouldBlockOwnerChange`: a change
+  away from the server is blocked for a stack moved this frame (destroy queued) and for a held stack unless
+  `WaterBuoyancyEngine.HasPickupGrace` (the 3 s grace `HandlePickupRequest` sets before it calls `SetOwner`) or the
+  hold is more than 3 s past maturity. Zero cost with nothing held or moved.
+- `LatePickupPatch`: prefix on `ZDOMan.RPC_DestroyZDO`; for a sender other than the server it reads the batch (position
+  restored) and, for every ZDOID in `_recentlyMoved` (stacks the vacuum moved within `RecentMoveSeconds` = 10 s, with
+  container, item name and count), removes that many of that item from the container again (`Commit`, name cache
+  refreshed) and logs `[ItemLedger] Vacuum rejected Nx <item>: '<player>' picked it up first - taken back out of the
+  chest (N of N still there)`. A busy chest is retried every frame for `TakeBackRetrySeconds` = 30 s, then a warning.
+  Moves that a failed container write rolled back are forgotten before the write's exception is logged.
+- WaterBuoyancy's pickup grace, grant memory and claim times are purged on the sweep timer whether or not
+  `AllItemsFloatEnabled` is on (the grace dictionary used to grow without bound with the feature off).
+- Latency: a player-dropped stack is in its chest at most one `VacuumInterval` + 1 s after it lands (was one
+  `VacuumInterval`); a sweep's drops are unchanged (same frame).
+
+**The near-player pass** (`VacuumAround`, `IsCandidateGroundItem`, `IsPlacedOrHatching`, `RememberContainerNames`,
+`RememberUnwanted`, `PruneUnwanted`, `PruneContainerNames`)
+- A ground ZDO qualifies containers only if its prefab is in the item set, it is not placed (`ZDOVars.s_piece`, set by
+  `ItemDrop.MakePiece` from `Player.PlacePiece`) or hatching (`ZDOVars.s_growStart` > 0, kept by
+  `EggGrow.GrowUpdate` while the egg can grow), not in `_destroyedThisBatch`, not in `_holds`, not in `_unwantedUntil`
+  (`UnwantedRetrySeconds` = 5 s) and not on `VacuumExcludedItems` (`ParsedList`: the comma list is split once per
+  config string and kept as a case-insensitive set; prefab names come from a per-hash table, no `GetPrefab` in the
+  pass). The same rule is applied per stack in `VacuumGroundItemsInto`.
+- Container name cache: after each load (and after each save, so the revision on file is the keyed one)
+  `RememberContainerNames` stores the set of shared item names the container holds together with its `DataRevision`.
+  A container whose entry matches its current `DataRevision` is only loaded when a qualifying stack's item name is in
+  that set; any write to the ZDO, by any client or by this server, raises the revision and invalidates the entry. At
+  most `MaxContainerNameEntries` = 8192 entries, `ContainerNameTtlSeconds` = 600 s, pruned once a minute.
+- Containers are collected first (container prefabs not yet visited this pass), then visited from a rotating start
+  (`_nearRotation`, advanced by the number processed) with at most `MaxContainersPerVacuumAround` = 32 loaded per call.
+  A container someone has open (`ZdoInventoryIO.IsBusy`) and a container beyond the cap do not judge: the stacks in
+  their range are flagged truncated and are not memoised that pass. After the loop every stack that was not moved,
+  not claimed and not truncated goes into `_unwantedUntil`, which holds at most `MaxUnwantedEntries` = 4096 entries.
+- Item prefab set (`Initialize`): every `ZNetScene.m_namedPrefabs` entry with an `ItemDrop` whose shared name is set and
+  no `Fish` component, keyed by the table's own `name.GetStableHashCode()`; two side tables give the prefab name and
+  the shared item name per hash.
+- `ProcessContainer` order is now: overflow guard, and if it moved anything an immediate commit (its sibling save and
+  cache store happen inside the call, so this container's write follows at once); vacuum (each ground stack's
+  deserialisation in its own try/catch - a malformed one is memoised and warned about, the rest of the chest proceeds);
+  cache drain (commits inside the call, so it sits directly before the final write); commit. The whole sequence is in
+  one try/catch: on an exception `_pendingGroundDestroy` is cleared without destroying anything, the moves it recorded
+  are forgotten, the moved counter is restored and a rate-limited `[Vacuum] <prefab> at <pos> skipped this pass:
+  <exception>` warning is logged (its own 30 s limiter, separate from the auto-harvest one). Ground copies are
+  destroyed right after the commit, before the splash; `PlayVacuumEffect` at most once per container per frame.
+- "container full" (`CanAddItem` false) is recorded once per container and item name per `FullLogIntervalSeconds` =
+  60 s (`RecordFullOnce`).
+- No new config keys; every setting the new code reads is read per use, so all of section 2 still hot-reloads.
+
 ## 0.8.3
 
 ### Changed
