@@ -11,9 +11,8 @@ namespace Wonderland.Subsystems.Storage
     /// container ZDO set the other engines use. A chest is written only when it has items, nobody has
     /// it open (ZDOVars.s_inUse, set by the opening client before any content edit) and its anchor row
     /// is empty - so after the first pass a chest is normally never written again until a player
-    /// empties its bottom row. The write claims ownership for the moment of the commit like every
-    /// other Wonderland container write; ZDOMan.ReleaseZDOS hands it back to the nearest player within
-    /// about two seconds.
+    /// empties its bottom row. The write never touches ownership (since 0.8.2 - see ZdoInventoryIO.Save
+    /// for the hiccup that taking it caused); ZDO.Set replicates to every peer in range on its own.
     /// </summary>
     public static class ContainerRowsEngine
     {
@@ -28,6 +27,7 @@ namespace Wonderland.Subsystems.Storage
         private const float ReannounceInterval = 60f;
 
         private static ZdoSpatialQuery.PrefabSetScanner? _scanner;
+        private static List<string> _eligible = new List<string>();
         private static float _timer;
         private static readonly List<ZDO> _buffer = new List<ZDO>();
         private static int _anchoredTotal;
@@ -104,18 +104,43 @@ namespace Wonderland.Subsystems.Storage
                     }
                 }
             }
-            _scanner = new ZdoSpatialQuery.PrefabSetScanner(eligibleNames);
+            // Only a changed set gets a new scanner: a fresh PrefabSetScanner starts at prefab 0 / sector 0,
+            // so rebuilding it every minute regardless (as up to 0.8.1) restarted the round-robin each time -
+            // the head of the list was swept every minute and the tail could go unvisited - and logged a
+            // "may have changed" line 60 times an hour when nothing had.
+            bool changed = firstAnnounce || !SameSet(_eligible, eligibleNames);
+            if (changed)
+            {
+                _eligible = eligibleNames;
+                _scanner = new ZdoSpatialQuery.PrefabSetScanner(eligibleNames);
+            }
 
             string summary = $"[ContainerRows] x{ContainerRows.Multiplier:0.##} rows on {eligibleNames.Count} of {ContainerRegistry.PrefabNames.Count} container type(s) (player-buildable only, includes ship cargo): {string.Join(", ", logEntries)}";
             if (firstAnnounce)
             {
                 WonderlandDebug.LogAlways(summary);
             }
-            else
+            else if (changed)
             {
-                WonderlandDebug.LogInfo($"[ContainerRows] eligible set refreshed ({eligibleNames.Count} type(s)) - ContainerRowsExcludedContainers may have changed.");
+                WonderlandDebug.LogInfo($"[ContainerRows] eligible set changed ({_eligible.Count} type(s)) - ContainerRowsExcludedContainers or the multiplier was edited; sweep restarted.");
             }
             _announced = true;
+            return true;
+        }
+
+        private static bool SameSet(List<string> a, List<string> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.Count; i++)
+            {
+                if (!string.Equals(a[i], b[i], System.StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
             return true;
         }
 

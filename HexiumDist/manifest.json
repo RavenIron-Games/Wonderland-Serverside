@@ -1,6 +1,6 @@
 {
     "name": "Wonderland",
-    "version_number": "0.8.1",
+    "version_number": "0.8.2",
     "website_url": "https://live.ravenirongames.com/",
     "description": "Strictly server-side Valheim 1.0 mod: automation, world governance, status effects, Discord notify, BarrkBOT export - vacuum, production supply, container rows, carry/stamina rates, raid/spawn control. Zero client install, full crossplay. See README.",
     "dependencies": [

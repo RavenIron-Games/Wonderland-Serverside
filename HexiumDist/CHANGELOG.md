@@ -1,5 +1,189 @@
 # Changelog
 
+## 0.8.2
+
+### Fixed
+- **Auto-harvest never reached a single farm crop.** The trigger watched vanilla's "picked" flag on the pickables
+  around each player, and vanilla only writes that flag for a pickable that respawns or hides when it is picked - a
+  berry bush, a mushroom, thistle, dandelion, a branch, flint, a core stand. Everything a farm grows is *destroyed*
+  when it is picked and never sets the flag at all, so carrot, turnip, onion, barley, flax, the three seed plants,
+  magecap and jotun puffs could never start a sweep: 47 of the game's 67 pickables were invisible to the feature.
+  Pick one carrot in a patch now and the patch comes with it, each drop landing where its plant grew for a matching
+  chest to vacuum home.
+- **The brief hiccup when placing an item into an expanded chest.** Every Wonderland container write - vacuum, sort,
+  overflow guard, cache drain, the Container Rows anchor, production supply's ore draw - first took ownership of the
+  chest's ZDO for the server. The write never needed it (a ZDO field write is not owner-gated), but the claim knocked
+  the player who had the chest open out of ownership: their client hides the container half of the inventory panel
+  and cancels any drag until vanilla hands the chest back up to two seconds later, and while the server holds it the
+  client can no longer mark the chest "in use", the flag every Wonderland sweep checks before touching a chest. Grown
+  chests felt it most because the Container Rows sweep visits only grown chests, and often. Container writes no
+  longer touch ownership at all.
+
+### Changed
+- **The trigger is the pick itself, not a search.** The server no longer scans the ground around every player each
+  frame looking for something that changed; it reads the picking client's own "this one is picked" broadcast as it
+  passes through the server, which happens once per pick for every pickable in the game, whether or not vanilla
+  keeps the plant afterwards. It also costs one integer compare per routed message instead of a nine-sector scan per
+  player per frame.
+- **The sweep runs half a second after the pick** instead of in the same frame. One scythe swing cuts every plant in
+  reach inside a single client frame, and that client's own delete batch for them only leaves on its next tick -
+  sweeping instantly would re-harvest plants the player had already cut and pay out the same crop twice. After the
+  half second the swing is over and only plants still standing are swept. It still reads as instant.
+- **A pick only counts when a connected player is standing at the plant.** Any client can address that broadcast at
+  any object, so a pick reported from more than 16 m away, or by something that is not a player on the server's own
+  roster, is ignored and logged (at most one such warning every 30 seconds). The sweep is credited to the nearest
+  player: the pick's sender is whoever owns the plant's ZDO, which on a shared base is often someone else. Queue
+  guards cap what a single client can ask for: at most 16 picks waiting per player (a scythe swing exceeds that
+  silently - the first sweep already covers the radius), 128 in total, at most 4 sweeps per frame and 40 plants per
+  sweep pass (a dense field finishes over the next few frames).
+- **Swept plants now give their extra drops** the way they do when you pick them by hand - magecap and jotun puffs
+  hand over the two extra of themselves, vine ash, vine green and fiddlehead their extra berry. Only the main drop
+  was given before.
+- **Royal jelly is no longer swept.** It is the one pickable vanilla refuses to pick while it floats in tar, and that
+  check lives in client physics the server cannot make, so the whole prefab is left alone rather than swept out from
+  under a player who could not have picked it themselves.
+- **`VacuumExcludedItems` matches either name** for auto-harvest now: the item (`Carrot`) or the plant it grows on
+  (`Pickable_Carrot`). The item name alone still covers both the vacuum and the sweep.
+- **One visit per chest per sweep.** Vanilla's sector walk re-scans the sector it stopped in on the next chunk, so a
+  chest on that boundary was loaded (and, on any change, written) twice in one tick. The shared scanner now drops the
+  overlap for every engine that uses it.
+- **Container Rows keeps its place.** The eligible-container list is still re-checked every minute, but the sweep's
+  round-robin is only restarted, and the log line only written, when the list actually changed. Up to 0.8.1 both
+  happened every minute, so the head of the list was swept constantly while the tail could go unvisited, and the log
+  claimed a config change sixty times an hour.
+- **Setting descriptions rewritten** in `2 - Vacuum & Auto-Harvest`: `AutoHarvestEnabled` lists what is swept and what
+  is never swept, `AutoHarvestRadius` says the sweep happens half a second after the pick, `VacuumExcludedItems` says
+  which names it matches. No new settings, no changed defaults, and the section hot-reloads exactly as before.
+
+### Reference (the data behind the 0.8.2 entry)
+
+**Why crops never swept** (1.0.12 server decompile)
+- `Pickable.SetPicked` (71058-71082) is the assembly's only write of `ZDOVars.s_picked`, and it writes it only when
+  `m_respawnTimeMinutes > 0` or `m_hideWhenPicked != null`; otherwise it calls `m_nview.Destroy()`. The pre-0.8.2
+  trigger polled that key around each connected player every frame (`ProcessHarvestTriggers` / `_lastPicked`, both
+  removed), so the whole destroyed-on-pick class was unreachable by construction, not by a mistake in the scan.
+- The split: 67 `Pickable` prefabs ship with the game. 20 keep their ZDO (berry bushes, mushrooms, thistle,
+  dandelion, branches, flint, core stands, royal jelly) - only those ever swept. 47 are destroyed on pick: the 10
+  `m_harvestable` ones the scythe cuts (carrot, turnip, onion, barley, flax, seed carrot, seed turnip, seed onion,
+  magecap, jotun puffs) now sweep, and the other 37 (ores, tar, dungeon loot, crypt remains) say
+  `m_harvestable = false` and stay out - their value usually sits in `m_extraDrops` or behind a pit that has to be
+  drained first. Sweepable set: 20 - `Pickable_RoyalJelly` + 10 = 29 of 67.
+- Sweepable is exactly `!m_tarPreventsPicking && (m_respawnTimeMinutes > 0f || m_hideWhenPicked != null ||
+  m_harvestable)` (`VacuumEngine.IsSweepable`).
+
+**The trigger** (`Subsystems/ItemFlow/HarvestTriggerPatch.cs`, new)
+- Harmony prefix on `ZRoutedRpc.HandleRoutedRPC` (83646). `Pickable.RPC_Pick` (71024-71051) drops the items on the
+  owning client and ends with `m_nview.InvokeRPC(ZNetView.Everybody, "RPC_SetPicked", true)` (71050); that reaches
+  the server as `RPC_RoutedRPC` (83632) -> `HandleRoutedRPC`, which drops it without a trace because the server has
+  no instance of that pickable (`VALHEIM-DEDICATED-SERVER-FACTS`: "a routed RPC aimed at a ZDO with no local
+  instance is dropped, silently"). The prefix filters on `m_methodHash == "RPC_SetPicked".GetStableHashCode()` and a
+  non-none `m_targetZDO` before anything else. A patch on `Pickable` itself could never fire: the server pins ZNet's
+  reference position at (1e6, 0, 1e6) every physics tick and instantiates only around that point.
+- The body never throws outward - an exception would unwind `RPC_RoutedRPC` before it relays the message to the
+  other clients and leave a stale plant on their screens. Its own failures log at most once every 60 s.
+- Deliberately a separate patch class from `WaterBuoyancyEngine`'s `RoutedRpcHandlerPatch` on the same method:
+  `SafePatch` isolates each set's failure, and HarmonyX runs every prefix regardless of what another returns.
+- `VacuumEngine.OnPickedRpc` then, in order: skips `data.m_senderPeerID == ZDOMan.GetSessionID()` - the server's own
+  `RPC_SetPicked` from `HarvestPickable` comes straight back through this handler, because `InvokeRoutedRPC` to
+  Everybody is handled locally and synchronously on the sender (83587-83590), and without this guard the sweep would
+  re-enter itself without bound; reads the one bool from `m_parameters` at position 0 with a `GetPos`/`SetPos`
+  save-restore (vanilla may still read the buffer after the prefix) and ignores `false`, which is a bush respawning
+  (`Pickable.UpdateRespawn`); resolves the ZDO and requires a `Pickable` prefab that `IsSweepable` and is not
+  excluded; requires the sender to be a connected peer (`ConnectedCharacters`, `Peer.m_uid == m_senderPeerID`) and a
+  connected player within `MaxPickReachMeters` of the plant, who is the one credited; ledgers the picked plant in `_harvestedAt` so nothing queued behind it can take it again; queues a
+  `HarvestTrigger` (uid, prefab hash, position, sender, picker name, `dueAt`).
+
+**Guards and constants** (`Subsystems/ItemFlow/VacuumEngine.cs`)
+- `HarvestSweepDelaySeconds` = 0.5 s - the deferral. A scythe swing sends one RPC per plant in one client frame while
+  that client's `DestroyZDO` batch for them only leaves on its next `ZDOMan.Update` (76812-76821).
+- `MaxSweepsPerFrame` = 4 - sweeps run from `OnUpdate`, never inside the network handler; the rest wait a frame.
+- `MaxPendingTriggersPerPeer` = 16, `MaxPendingTriggers` = 128 - over either, the pick is ledgered but gets no bonus
+  (only the global cap warns; the per-player one is what a scythe swing looks like).
+- `MaxHarvestsPerSweep` = 40 plants per pass; a trigger that hits it is re-queued `HarvestSweepContinueSeconds` = 0.1 s
+  later for the rest of the field.
+- `MaxPickReachMeters` = 16 m - vanilla interact range is 5 m; the rest is headroom for a sprinting player's character
+  ZDO lagging behind them. Measured from the nearest connected player, not the RPC sender: `Pickable.Interact` routes `RPC_Pick`
+  to the plant ZDO's owner (82855-82857) and only the owner broadcasts `RPC_SetPicked`, and `ReleaseNearbyZDOS` leaves
+  ownership with whichever player holds it anywhere inside their ~96 m active area. The sender still has to be a
+  connected peer (the anti-forgery half).
+- `TriggerWarningIntervalSeconds` = 30 s - one trigger warning per 30 s, whichever kind.
+- `FailureLogIntervalSeconds` = 60 s (`HarvestTriggerPatch`) - one patch-failure warning per minute.
+- Ledger: `MaxTrackedPickables` = 50000 and `LedgerPruneIntervalSeconds` = 60 s gate `PruneHarvestLedger`, which drops
+  entries older than one game day or whose ZDO no longer exists (every swept crop, once its destroy has gone
+  through). Aged out rather than cleared: dropping a still-fresh entry reopens the re-harvest window the ledger
+  exists to close.
+- `AutoHarvestEnabled` turned off between a pick and its sweep clears the queue - the pick already happened on the
+  client, the bonus simply does not follow.
+
+**What a sweep does** (`SweepBonusHarvest` / `HarvestPickable`)
+- `ZdoSpatialQuery.FindNear(position, AutoHarvestRadius)` for the same prefab hash, skipping the trigger's own uid,
+  anything with `s_picked` set, and anything the ledger says was harvested inside its own `m_respawnTimeMinutes`
+  (a plant that never respawns is never swept twice). The exclusion list is re-checked at sweep time in case it was
+  hot-edited in the half second since the pick.
+- Order per plant, changed in 0.8.2: ledger + `SetOwner(ZDOMan.GetSessionID())` + (`s_picked` / `s_pickedTime` only
+  for the keep-the-ZDO class) **first**; then `ItemDrop.DropItem` of `Game.ScaleDrops`'d `m_amount` (`m_dontScale`
+  honoured, floor `m_minAmountScaled`) at the plant + 0.3 m, from a clone of the prefab's `ItemData` with
+  `m_dropPrefab` set by hand (a prefab's own template never runs `ItemDrop.Awake`, and `DropItem` instantiates from
+  exactly that field); then every `m_extraDrops` roll via `DropTable.GetDropListItems()` at + 0.5 m (new in 0.8.2);
+  then `ZRoutedRpc.InvokeRoutedRPC(Everybody, uid, "RPC_SetPicked", true)` so loaded clients hide the model; then
+  `ZDOMan.DestroyZDO` for the destroyed-on-pick class. The broadcast is last so nothing reacting to it can find the
+  plant unharvested.
+- Every drop is counted under the `AutoHarvest` ledger tag as before, so the BarrkBOT `vacuum_items_moved_*` counters
+  are unchanged in shape.
+
+**Log lines**
+- `[AutoHarvest] Pickable_Carrot picked by 'Name' - swept 5 more within 8 m.` (info, only when at least one was
+  swept; the radius is the live `AutoHarvestRadius`).
+- `[AutoHarvest] ignored a pick of Pickable_Carrot reported by peer 139331814: not a connected player.` (warning)
+- `[AutoHarvest] ignored a pick of Pickable_Carrot: no connected player within 16 m of it.` (warning)
+- `[AutoHarvest] 128 picks are already waiting to sweep - 'Name' picked Pickable_Carrot and it gets no bonus.` (warning;
+  the per-player cap is silent)
+- `[AutoHarvest] sweep of Pickable_Carrot failed: <Exception>: <message>` (warning, once per 30 s, the deferred sweep)
+- `[AutoHarvest] trigger failed: NullReferenceException: <message>` (warning, once per 60 s, patch body only)
+- `[AutoHarvest] ledger pruned: 812 finished entries dropped, 50120 kept.` (info; "entry" when exactly one)
+- `[ItemLedger] AutoHarvest moved 2x $item_carrot` - unchanged, one per drop.
+
+**The `2x` in every ledger line is the world, not the mod**
+- `[ItemLedger] AutoHarvest moved 2x $item_blueberries` for a plant whose `m_amount` is 1 is the world's own resource
+  rate: `Game.ScaleDrops` (101052-101071) multiplies by `m_resourceRate` (the `resourcerate` global key) and rounds,
+  so any rate from 150% to 249% turns 1 into 2. Every one of the 259 auto-harvest drops in the live log this boot -
+  blueberries, thistle, common mushroom, flint, dandelion, yellow mushroom, raspberries, wood, surtling core - reads
+  `2x` for that reason. A world at 100% logs `1x`. Wonderland doubles nothing; it calls the same scaler vanilla does.
+
+**Deliberately not reproduced on a swept plant**
+- The Farming-skill bonus yield `Pickable.RPC_Pick` rolls on the picking client: the server has no `Player` and no
+  skills, so a swept plant pays the scaled base amount only.
+- The theft aggro (`BaseAI.AggravateAllInArea(position, m_aggravateRange, AggravatedReason.Theif)`, 71048) and the
+  pick effects, both of which need a live GameObject the server does not have.
+- Tar-floating: vanilla's `m_tarPreventsPicking` test is client physics, so the affected prefab is excluded outright.
+- None of this touches the pick the player actually made - that ran with full vanilla behaviour on their own client.
+  Only the swept-in bonus is trimmed.
+
+**The expanded-chest hiccup** (`Core/Data/ZdoInventoryIO.Save`)
+- Cause: `Save` did `zdo.SetOwner(ZNet.GetUID())` before `zdo.Set(ZDOVars.s_items, …)`. `ZDO.Set(int, byte[])` →
+  `IncreaseDataRevision` has no owner check, so the data landed and replicated regardless of the claim. The claim bumped
+  `OwnerRevision`; `ZDOMan.RPC_ZDOData` applies a newer `OwnerRevision` even when it drops the data; the client's
+  `InventoryGui.UpdateContainer` gates the container panel on `m_currentContainer.IsOwner()` and otherwise
+  `SetActive(false)`s it and cancels the drag; `ZDOMan.ReleaseZDOS` (2 s timer) hands the ZDO back and the panel is
+  re-enabled. `Container.SetInUse` / `UpdateUseVisual` write `s_inUse` only as owner, so a chest the server had taken
+  could never be marked in use again and `IsBusy` failed open for the rest of the session.
+- Callers, all through `ZdoInventoryIO.Save` and none changed: `VacuumEngine.ProcessContainer`, `SortEngine`,
+  `GridGrowth` (sibling overflow), `ContainerRowsEngine.Visit`, `ItemIntegritySweep`, `ProductionSupplyEngine`.
+  Pressure on the box that reported it: `ContainerRowsInterval = 2` / `ContainerRowsBatchSize = 125` (defaults 5 /
+  25), `SortInterval = 15` / `SortBatchSize = 100` (defaults 30 / 10) - about 80 container visits a second across
+  three scanners; 23 anchors in 7.7 h, one Karve anchored twice on adjacent lines (the duplicate-visit overlap).
+- Ownership elsewhere is unchanged: the vacuum's ground-item destroy, buoyant items, spawn culling and swept
+  pickables still claim their ZDOs because `DestroyZDO` and position writes are owner-gated. No container a player is
+  using is claimed any more.
+- Scanner: `ZdoSpatialQuery.PrefabSetScanner.Advance` remembers the previous chunk's ZDOIDs and drops them from the
+  next; vanilla's `GetAllZDOsWithPrefabIterative` breaks on its 400-sector budget before advancing its index, so
+  consecutive chunks overlap by one sector. `ContainerRowsEngine.Announce` compares the new eligible list to the last
+  and only then replaces the scanner (which restarts at prefab 0 / sector 0) and logs `[ContainerRows] eligible set
+  changed (N type(s)) - ContainerRowsExcludedContainers or the multiplier was edited; sweep restarted.` The per-minute
+  `eligible set refreshed …` line is gone.
+- If the hiccup is still seen on 0.8.2, the next lever is that live tuning: back at the defaults the write pressure
+  drops about fifteen-fold, and the section hot-reloads.
+
 ## 0.8.1
 
 ### Added

@@ -241,3 +241,84 @@ player information … include the platform they are on (PC, Xbox, Switch 2, etc
 - Deploy: `HexiumDist/Wonderland-v0.8.1.zip` (Rohan's step, same as §3.2); first-boot lines: the `[Config] 3 …`
   line above, then the usual `[DiscordNotify] webhook configured …` / `[BarrkBot] exporting …`; first join after
   that should log `'Name' (PC) connected.` and post the bracketed headline.
+
+
+## 11. 2026-09-16 (mid-morning): 0.8.1 is live; auto-harvest reaches crops (→ 0.8.2)
+
+**0.8.1 is deployed and its first boot passed.** The 03:16 boot on 2026-09-16 shows `Loading [Wonderland 0.8.1]` /
+`Starting Wonderland v0.8.1`, the staged migration exactly once - `[Config] 3 Discord message template(s) were still
+on an earlier version's default and have been moved to the 0.8.1 style …` - and the cfg now reads
+`DiscordTemplateStyle = 2` (so it will not run again). The first join after it logged
+`[DiscordNotify] 'TiCkLeChIcKeN' (PC) connected.`, and the live `barrkbot_wonderland.json` player rows carry
+`"platform": "PC"` at `schema_version` 3. §10's open items are closed; 0.8.1 is the version in the field.
+
+**The report, and what was actually wrong.** A player said auto-harvest was not doing anything on their farm; Rohan's
+first read was "it's a misconception" - and half of it was. The `2x` on every `[ItemLedger] AutoHarvest moved 2x
+$item_…` line is the world's own `resourcerate` global key running through `Game.ScaleDrops` (101052-101071), not
+Wonderland doubling drops, and the feature was demonstrably alive: 259 auto-harvest drops in this boot's log. The
+other half was real. Every one of those 259 is blueberries / thistle / common mushroom / flint / dandelion / yellow
+mushroom / raspberries / wood / surtling core - **zero crops** - while a carrot field was being hand-picked next to
+a carrot chest. Root cause: `Pickable.SetPicked` (71058-71082) is the only write of `ZDOVars.s_picked` in the
+assembly and only writes it when `m_respawnTimeMinutes > 0` or `m_hideWhenPicked != null`; everything else is
+`m_nview.Destroy()`ed on pick. The old trigger polled that key around each player every frame, so 47 of the 67
+`Pickable` prefabs - every farm crop among them - could never trigger a sweep at all. (Live `AutoHarvestRadius` had
+been 20; Rohan set it back to the 8 default today, which is what the new log lines report.)
+
+**0.8.2 (in the working tree, build clean 0/0, not committed).** The trigger is now the pick itself.
+`Subsystems/ItemFlow/HarvestTriggerPatch.cs` (new) is a Harmony prefix on `ZRoutedRpc.HandleRoutedRPC` (83646) that
+catches the picking client's `"RPC_SetPicked"` true broadcast (`Pickable.RPC_Pick` 71050 → `RPC_RoutedRPC` 83632 →
+`HandleRoutedRPC`, where vanilla drops it for lack of an instance) and calls `VacuumEngine.OnPickedRpc`. Separate
+patch class from `WaterBuoyancyEngine`'s `RoutedRpcHandlerPatch` on the same method (SafePatch isolation); the body
+never throws outward, or `RPC_RoutedRPC` would not relay the message to the other clients.
+
+- Guards, all in `VacuumEngine`: sender `== ZDOMan.GetSessionID()` is skipped (our own `HarvestPickable` broadcast
+  comes back through the same handler - `InvokeRoutedRPC(Everybody)` is handled locally on the sender, 83587-83590 -
+  and without it the sweep re-enters itself without bound); the bool is read from `m_parameters` at position 0 with a
+  `GetPos`/`SetPos` restore and `false` is ignored (a bush respawning); the prefab must be `IsSweepable`
+  (`!m_tarPreventsPicking && (respawns || hides || m_harvestable)`) and not in `VacuumExcludedItems`, which now
+  matches the plant name or the item name; the sender must be a `ConnectedCharacter` within `MaxPickReachMeters` 16 m
+  (the RPC is client-forgeable). Then `MaxPendingTriggersPerPeer` 16 / `MaxPendingTriggers` 128,
+  `HarvestSweepDelaySeconds` 0.5, `MaxSweepsPerFrame` 4, `TriggerWarningIntervalSeconds` 30,
+  `FailureLogIntervalSeconds` 60 in the patch, and `PruneHarvestLedger` once a minute above `MaxTrackedPickables`
+  50000 (drops entries older than a game day or whose ZDO is gone).
+- The half-second deferral is not cosmetic: a scythe swing picks every plant in reach in one client frame and its
+  `DestroyZDO` batch only leaves on the client's next `ZDOMan.Update` (76812-76821), so an inline sweep would
+  re-harvest plants the player had already cut.
+- `HarvestPickable` order changed to ledger + `SetOwner` + flags first, then the scaled `DropItem`, then
+  `m_extraDrops` via `GetDropListItems()` (new - magecap / jotun puffs / vine ash / vine green / fiddlehead), then
+  the `RPC_SetPicked` broadcast, then `DestroyZDO` for the destroy class. Farming-skill bonus yield, theft aggro and
+  pick effects are deliberately not reproduced. `Pickable_RoyalJelly` no longer sweeps (tar check is client physics).
+- Bumped to 0.8.2 in `Plugin.cs`, `Wonderland.csproj`, `HexiumDist/manifest.json`, `tools/barrkbot/sample_*.json`;
+  config text updated in `Core/WonderlandConfig.cs` (~173-178) with no new keys and no changed defaults; README
+  (pitch) and CHANGELOG (0.8.2 Fixed / Changed / Reference) written.
+
+**Live test plan for the 0.8.2 boot** (nothing below has run on a real server yet):
+
+1. Boot: `Successfully applied Harmony patch set: HarvestTriggerPatch` in the ItemFlow block, alongside
+   `ZdoSetOwnerPatch` and `RoutedRpcHandlerPatch`.
+2. Regression, flag class: pick one blueberry bush with others around it → `[AutoHarvest] BlueberryBush picked by
+   'Name' - swept N more within 8 m.` plus the `[ItemLedger] AutoHarvest moved 2x $item_blueberries` lines. Walk away
+   and back: no repeat sweep of the same bushes (the `_harvestedAt` ledger, not `s_picked`, is what holds).
+3. The fix: at the carrot chest (33, 32, 183) pick **one** carrot out of a patch → `[AutoHarvest] Pickable_Carrot
+   picked by 'Name' - swept N more within 8 m.` about half a second later, then the vacuum line
+   `Vacuum moved … $item_carrot` as the chest pulls the drops in.
+4. Scythe: one swing over 4+ barley → **zero** `[AutoHarvest]` lines for the plants that swing cut, and no extra
+   items on the ground beyond what the swing itself dropped. (This is the deferral doing its job; a bonus sweep of
+   barley standing *outside* the swing is fine and expected.)
+5. Hot edit `VacuumExcludedItems = Carrot` while running → the next carrot pick sweeps nothing, no restart.
+6. Hot edit `AutoHarvestEnabled = false` → sweeps stop immediately (pending ones are dropped), still no restart.
+   Set both back afterwards.
+7. Watch for `[AutoHarvest] ignored a pick …` warnings (distance or non-player), `[AutoHarvest] trigger failed: …`,
+   and any `Exception in ZRpc::HandlePackage` in the log - expect none of the three. A distance warning during normal
+   play means `MaxPickReachMeters` is too tight for the world's lag and should be raised, not that a cheat happened.
+8. Expanded-chest hiccup - diagnosed the same morning by three parallel readers of the decompile and the live log,
+   fixed in 0.8.2. Every `ZdoInventoryIO.Save` took ownership of the chest ZDO; the client of the player with that
+   chest open hides the container panel and cancels the drag while it is not the owner (`InventoryGui.UpdateContainer`)
+   until `ReleaseZDOS` hands it back (<= 2 s), and a taken chest can never write `s_inUse` again (owner-gated), so the
+   busy gate failed open. `Save` no longer touches ownership; `PrefabSetScanner` drops vanilla's one-sector chunk
+   overlap (the Karve anchored twice on adjacent log lines); `ContainerRowsEngine` only restarts its round-robin when
+   the eligible list changed (the `eligible set refreshed` line, 438x this boot, is gone). Test: with two players on,
+   one keeps a grown chest open for a minute, dropping and shift-clicking stacks - the container panel must never
+   blink and no drag may cancel; `parked` lines should still appear now and then. If it still hiccups, the live
+   tuning is the next lever, hot-reloaded: `ContainerRowsInterval` 2 -> 5, `ContainerRowsBatchSize` 125 -> 25,
+   `SortInterval` 15 -> 30, `SortBatchSize` 100 -> 10.

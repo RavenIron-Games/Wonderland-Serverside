@@ -45,13 +45,24 @@ namespace Wonderland.Core.Data
         }
 
         /// <summary>
-        /// Claims ownership only at the moment of commit (never pinned - this never fights
-        /// Container.RPC_RequestOpen's own handoff to whichever player opens it next) and writes
-        /// the inventory back to the ZDO's byte blob.
+        /// Writes the inventory back to the ZDO's byte blob - and nothing else. Up to 0.8.1 this first did
+        /// zdo.SetOwner(server), which was the "brief hiccup when placing an item into an expanded chest":
+        /// ZDO.Set is not owner-gated (ZDO.Set(int, byte[]) -> IncreaseDataRevision, no owner check - the
+        /// libs-Tools fact "only SetPosition is owner-gated"), so the write already landed and replicated to
+        /// every peer in range without the claim. What the claim did was bump OwnerRevision on a chest a
+        /// player had open: their client applies a newer OwnerRevision even when it rejects the data
+        /// (ZDOMan.RPC_ZDOData), InventoryGui.UpdateContainer then takes its not-owner branch - the container
+        /// half of the inventory panel SetActive(false), the drag cancelled - until ReleaseNearbyZDOS handed
+        /// the ZDO back up to 2 s later, and because Container.SetInUse is owner-gated the player could no
+        /// longer write s_inUse, the very flag IsBusy relies on. Grown chests felt it most because the
+        /// ContainerRows sweep only visits grown chests. Same lesson ProductionSupplyEngine learned for
+        /// stations in 0.8.0: the server never takes ownership of something a player is using. Ownership is
+        /// left exactly as vanilla's ReleaseZDOS manages it. Wonderland still claims ZDOs where an owner-gated
+        /// call genuinely needs it - ground items it destroys, buoyant items, culled spawns, swept pickables -
+        /// never a container a player is using.
         /// </summary>
         public static void Save(ZDO zdo, Inventory inventory)
         {
-            zdo.SetOwner(ZNet.GetUID());
             var pkg = new ZPackage();
             inventory.Save(pkg);
             zdo.Set(ZDOVars.s_items, pkg.GetArray());

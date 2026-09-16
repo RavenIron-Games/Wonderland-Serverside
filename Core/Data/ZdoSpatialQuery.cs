@@ -94,6 +94,8 @@ namespace Wonderland.Core.Data
             private readonly List<string> _prefabNames;
             private int _prefabIndex;
             private int _sectorCursor;
+            private HashSet<ZDOID> _lastChunk = new HashSet<ZDOID>();
+            private HashSet<ZDOID> _thisChunk = new HashSet<ZDOID>();
 
             public PrefabSetScanner(IEnumerable<string> prefabNames)
             {
@@ -102,7 +104,14 @@ namespace Wonderland.Core.Data
 
             public int TrackedPrefabCount => _prefabNames.Count;
 
-            /// <summary>Appends whatever this chunk found to <paramref name="results"/> (not cleared first).</summary>
+            /// <summary>
+            /// Appends whatever this chunk found to <paramref name="results"/> (not cleared first). Vanilla's
+            /// GetAllZDOsWithPrefabIterative breaks on its 400-sector budget BEFORE advancing its index, so
+            /// the next call re-walks the sector it stopped in and consecutive chunks overlap by up to one
+            /// sector. Since 0.8.2 that overlap is dropped here, once, rather than in every caller - each
+            /// duplicate was a second Load and, on any change, a second write of the same chest in the same
+            /// tick (seen live: one Karve anchored twice on adjacent log lines).
+            /// </summary>
             public void Advance(List<ZDO> results)
             {
                 if (_prefabNames.Count == 0 || ZDOMan.instance == null)
@@ -110,12 +119,34 @@ namespace Wonderland.Core.Data
                     return;
                 }
 
+                int before = results.Count;
                 string name = _prefabNames[_prefabIndex];
                 bool done = ZDOMan.instance.GetAllZDOsWithPrefabIterative(name, results, ref _sectorCursor);
+
+                _thisChunk.Clear();
+                int write = before;
+                for (int read = before; read < results.Count; read++)
+                {
+                    ZDO zdo = results[read];
+                    _thisChunk.Add(zdo.m_uid);
+                    if (!_lastChunk.Contains(zdo.m_uid))
+                    {
+                        results[write++] = zdo;
+                    }
+                }
+                if (write < results.Count)
+                {
+                    results.RemoveRange(write, results.Count - write);
+                }
+                HashSet<ZDOID> swap = _lastChunk;
+                _lastChunk = _thisChunk;
+                _thisChunk = swap;
+
                 if (done)
                 {
                     _sectorCursor = 0;
                     _prefabIndex = (_prefabIndex + 1) % _prefabNames.Count;
+                    _lastChunk.Clear(); // a different prefab next - nothing to overlap with
                 }
             }
         }
