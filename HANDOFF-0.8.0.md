@@ -197,3 +197,47 @@ dependency; "seven" seen-keys was the live box's count, not the mechanism) — a
 description updated (250-char cap). `HexiumDist/Wonderland-v0.8.0.zip` built from manifest + README + CHANGELOG + icon +
 the 20:12 DLL (zips are gitignored).
 
+
+## 10. 2026-09-16 (early): 0.8.0 is live; player platform in every player listing (→ 0.8.1)
+
+**0.8.0 is deployed.** Rohan installed it on 2026-09-15 at 22:05 (`BepInEx/plugins/Wonderland-v0.8.0/` on the box).
+The 02:40 boot on 2026-09-16, read from the mirror's `LogOutput.log`, passed the §3.4 checks that can show on a second
+boot: `[DiscordNotify] webhook configured: yes | server status: on | logins: on | deaths: on | first join: on | boss
+defeats: on | heartbeat: off …`, `[BarrkBot] loaded 0 player row(s) …` / `exporting to … every 60 s`, **no**
+`boss defeated: Eikthyr` during load, no Newtonsoft error (the Newtonsoft.Json Detector plugin confirms 13.0.0.0 from
+`Managed/`). The template migration and seen-key cleanup lines are absent because they ran on the first boot, whose
+log BepInEx overwrote - the cfg shows `DiscordTemplateStyle = 1` and the 0.8.0 join template. The first real
+`barrkbot_wonderland.json` exists (`server.name` "Wubarrks Vanilla Bean", world_day 152, known_accounts 14, Eikthyr
+defeated, 4 stations off, no player rows yet - nobody connected since the boot) and discord-barrkbot-57 was told.
+The server runs `-crossplay` (PlayFab); its player history is 13 Steam + 1 PlayStation account. §3.5's first-session
+checks (veteran not welcomed, hand-feed at an auto-fed smelter, `via rpc sent to owner` lines) are still to be watched.
+
+**Platform labels (0.8.1, in the working tree, build clean 0/0, not committed).** Rohan: "when we output current
+player information … include the platform they are on (PC, Xbox, Switch 2, etc)". Because 0.8.0 is live, this is
+**0.8.1** (`Plugin.cs` ModVersion, csproj, manifest, samples bumped; CHANGELOG has its own 0.8.1 entry).
+
+- `Core/Data/PeerPlatform.cs` (new): `Id(peer)` is the former `PeerJoinLeaveHook.ResolvePlatformUserID` (same
+  construction as `ZNet.UpdatePlayerList`; PlayFab side now `TryParse`, which does not `Debug.Log` on failure);
+  `Label(peer)` / `LabelForId(string)` / `LabelFor(Platform)` map `Steam`→`PC`, `Xbox`→`Xbox`, `PlayStation`→
+  `PlayStation`, `Nintendo`→`Switch 2`, other→its own name, unparseable→`""`; `WithLabel(name, peer)` → `Name (PC)`.
+  Account platform only - `RPC_PeerInfo` sends `Version.CurrentVersion.ToString()` without the platform prefix, and
+  nothing else in the handshake names the device - so Xbox console and PC Game Pass are one label. The id never
+  leaves the class.
+- Shown: `[DiscordNotify] 'Name' (PC) connected./disconnected./died./joined … first time.`; `[Heartbeat] … Name (PC),
+  Name (Xbox)`; Discord `{players}` roster (join/leave/boss/heartbeat defaults) and the new `{platform}` placeholder
+  (all 8 template descriptions and the regex updated); BarrkBOT `players.<id>.platform` (+ `players_notes` clause;
+  samples regenerated, probe run on `populated`: the string rides in the row, not ranked). `ConnectedCharacter`
+  gained `Platform` / `NameWithPlatform`. README (pitch), CHANGELOG (0.8.1 Added + Reference), `BARRKBOT_CONTRACT.md`
+  updated.
+- **Discord defaults (Rohan approved "proposed", 03:10):** join / leave / first-join headlines now read
+  `**{player}** ({platform}) joined|left **{world}**` / `Welcome **{player}** ({platform}) to **{world}**`; death,
+  boss, heartbeat, online, offline unchanged. `MigrateDiscordTemplates` is staged (`CurrentTemplateStyle = 2`): style
+  0 runs the 0.7.2 step then the 0.8.0 step, style 1 (the live cfg) runs only the 0.8.0 step, so on the first 0.8.1
+  boot expect `[Config] 3 Discord message template(s) were still on an earlier version's default and have been moved
+  to the 0.8.1 style …` once and `DiscordTemplateStyle = 2` in the cfg (Rohan's cfg had all three on the 0.8.0
+  default at 02:40). A blank platform collapses the `()` in Fill instead of posting it.
+- `HexiumDist/manifest.json` also carried an uncommitted `website_url` change (`https://live.ravenirongames.com/`)
+  that was in the tree before this work - not mine, committed along.
+- Deploy: `HexiumDist/Wonderland-v0.8.1.zip` (Rohan's step, same as §3.2); first-boot lines: the `[Config] 3 …`
+  line above, then the usual `[DiscordNotify] webhook configured …` / `[BarrkBot] exporting …`; first join after
+  that should log `'Name' (PC) connected.` and post the bracketed headline.

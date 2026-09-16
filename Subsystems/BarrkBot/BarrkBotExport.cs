@@ -101,7 +101,8 @@ namespace Wonderland.Subsystems.BarrkBot
             doc["players_notes"] =
                 "connected_seconds_alltime is server-measured connection time, not the character's playtime - never compare it with " +
                 "another mod's playtime. sessions_alltime counts connections, not logins per day. deaths_alltime is deaths the " +
-                "server saw. welcomed_at only exists for accounts first seen after 0.8.0.";
+                "server saw. welcomed_at only exists for accounts first seen after 0.8.0. platform is the account platform they " +
+                "last connected from - PC (Steam), Xbox (console or PC Game Pass), PlayStation, Switch 2 - or empty if unknown.";
             doc["players_not_achievements"] = new List<string> { "deaths_alltime", "sessions_alltime" };
             doc["lifetime"] = BuildLifetime(reg);
             doc["lifetime_notes"] =
@@ -182,13 +183,15 @@ namespace Wonderland.Subsystems.BarrkBot
                 {
                     continue; // a row without a name would stop the whole map being read as per-player
                 }
-                // platform_id and the per-player security flag count stay in the .dat for the admin: the bot
-                // has no reader for the id, and a per-player flag count would be ranked into a public
-                // "most flagged" answer from heuristics that are suspicions, not verdicts.
+                // platform_id itself and the per-player security flag count stay in the .dat for the admin: the
+                // bot has no reader for the id (only its platform half is exported, as a label), and a
+                // per-player flag count would be ranked into a public "most flagged" answer from heuristics
+                // that are suspicions, not verdicts.
                 var row = new Dictionary<string, object>
                 {
                     ["name"] = r.name,
                     ["online_now"] = !stopping && BarrkBotStats.OnlineIds.Contains(kv.Key),
+                    ["platform"] = PeerPlatform.LabelForId(r.platform_id),
                     ["first_seen_at"] = r.first_seen_at,
                     ["last_seen_at"] = r.last_seen_at,
                     ["sessions_alltime"] = r.sessions_count,

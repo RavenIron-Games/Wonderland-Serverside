@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "generated_at": "2026-09-15T20:05:00Z",
-  "source": "Wonderland 0.8.0",
+  "source": "Wonderland 0.8.1",
   "intervals": {
     "write_seconds": 60
   },
@@ -21,7 +21,7 @@
       "Rohan"
     ],
     "peak_players_online": 5,
-    "wonderland_version": "0.8.0",
+    "wonderland_version": "0.8.1",
     "carry_weight_multiplier": 2.0,
     "stamina_regen_multiplier": 3.0,
     "bosses_defeated": [
@@ -41,6 +41,7 @@
     "552612142": {
       "name": "Bb King",
       "online_now": false,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 2,
@@ -51,6 +52,7 @@
     "2905537776": {
       "name": "ColdMonkey",
       "online_now": true,
+      "platform": "Xbox",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 5,
@@ -60,6 +62,7 @@
     "-350236578": {
       "name": "Rohan",
       "online_now": true,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 12,
@@ -67,7 +70,7 @@
       "deaths_alltime": 3
     }
   },
-  "players_notes": "connected_seconds_alltime is server-measured connection time, not the character's playtime - never compare it with another mod's playtime. sessions_alltime counts connections, not logins per day. deaths_alltime is deaths the server saw. welcomed_at only exists for accounts first seen after 0.8.0.",
+  "players_notes": "connected_seconds_alltime is server-measured connection time, not the character's playtime - never compare it with another mod's playtime. sessions_alltime counts connections, not logins per day. deaths_alltime is deaths the server saw. welcomed_at only exists for accounts first seen after 0.8.0. platform is the account platform they last connected from - PC (Steam), Xbox (console or PC Game Pass), PlayStation, Switch 2 - or empty if unknown.",
   "players_not_achievements": [
     "deaths_alltime",
     "sessions_alltime"

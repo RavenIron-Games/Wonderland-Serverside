@@ -13,7 +13,8 @@ namespace Wonderland.Core
     /// any one subsystem's. The log heartbeat (HeartbeatEnabled, section 1) and the Discord heartbeat
     /// (DiscordNotifyHeartbeat, section 14) share one interval by default; DiscordHeartbeatIntervalMinutes
     /// (section 14, 0 = shared) gives the Discord post its own, so a channel can get an hourly roster
-    /// while the log keeps its 15-minute pulse. Two timers, one roster read per tick that fires.
+    /// while the log keeps its 15-minute pulse. Two timers, one roster read per tick that fires. Each name
+    /// in the roster carries the platform it is playing from - "Alice (PC), Bob (Xbox)" (PeerPlatform).
     /// </summary>
     public static class Heartbeat
     {
@@ -51,7 +52,7 @@ namespace Wonderland.Core
 
             var characters = ZNet.instance != null ? ConnectedCharacters.All() : new System.Collections.Generic.List<ConnectedCharacter>();
             int playerCount = characters.Count;
-            string playerNames = string.Join(", ", characters.Select(c => c.Name));
+            string playerNames = string.Join(", ", characters.Select(c => c.NameWithPlatform));
             string world = ZNet.instance != null ? ZNet.instance.GetWorldName() : "(no world)";
             string uptime = FormatUptime(_uptimeSeconds);
 

@@ -40,8 +40,9 @@ files claiming the same facts). BarrkBOT does **not** read it.
   playtime, automation counts are not player actions and must never be summed or ranked against another
   mod's, security flags are suspicions not verdicts.
 - **Not exported on purpose:** each player's platform id (Steam64 / PSN / Xbox - the bot has no reader for it
-  and it would only be voiced verbatim) and the per-player security-flag tally (the reader ranks every numeric
-  row field, and "most flagged" from heuristics is not a public answer). Both stay in the `.dat` for the admin.
+  and it would only be voiced verbatim; only its platform half goes out, as the `platform` label) and the
+  per-player security-flag tally (the reader ranks every numeric row field, and "most flagged" from heuristics
+  is not a public answer). Both stay in the `.dat` for the admin.
 
 ## Field names currently depended on
 
@@ -56,9 +57,11 @@ sweeps more than one server root), `world_name`, `online`, `world_day` (integer 
 (dates only for defeats seen since 0.8.0), `stations_switched_off`.
 
 Per player (flat scalars only - nested objects are dropped from multi-row listings): `name` (required on every
-row or the whole map stops being per-player), `online_now`, `first_seen_at`, `last_seen_at`, `sessions_alltime`,
-`connected_seconds_alltime`, `deaths_alltime`, `welcomed_at` (only when the account's first ever visit happened
-after 0.8.0).
+row or the whole map stops being per-player), `online_now`, `platform` (string: `PC`, `Xbox`, `PlayStation`,
+`Switch 2`, or `""` when unknown - the account platform of the connection they last used; `Xbox` includes the
+PC Game Pass build), `first_seen_at`, `last_seen_at`, `sessions_alltime`, `connected_seconds_alltime`,
+`deaths_alltime`, `welcomed_at` (only when the account's first ever visit happened after 0.8.0). Verified through
+the 6.1.5 reader: a string scalar rides along in the row and is not ranked.
 
 `lifetime` (`_alltime` names so the reader knows they do not reset; no name is shared with `server` or a player
 row, which would draw a "same name, different scope" note): `production_supply_items_fed_alltime`,

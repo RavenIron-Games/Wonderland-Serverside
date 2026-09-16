@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.8.1
+
+### Added
+- **Player platform everywhere a player is named.** The server now reads which platform each connection comes from
+  and shows it wherever it lists players: the join / leave / death / first-join log lines (`'Rohan' (PC) connected.`),
+  the heartbeat roster in the log and in Discord (`Rohan (PC), Cpt JD (Xbox), ColdMonkey (Switch 2)`), the `{players}`
+  roster in every Discord template, a new `{platform}` placeholder for the player an announcement is about - the
+  default join, leave and first-join headlines now carry it (`🟢 **Rohan** (PC) joined **VanillaBean01**`,
+  `🔴 **Rohan** (PC) left **VanillaBean01**`, `🎉 Welcome **Rohan** (PC) to **VanillaBean01** — first time here!`) - and a
+  `platform` field on each BarrkBOT player row. Labels are `PC`, `Xbox`, `PlayStation`, `Switch 2`, or blank when the
+  game did not say. **Existing servers are migrated:** a join / leave / first-join template still on its 0.8.0 default
+  is moved to the new one on first load (logged once); anything you had edited is left exactly as it was. It is the account platform, which is all the handshake carries: `Xbox` covers both the console and
+  the Microsoft Store / Game Pass PC build, and `PC` is any Steam client (Windows, Linux, Steam Deck). The account id
+  itself is still never shown or exported.
+
+### Reference (the data behind the 0.8.1 entry)
+
+**Player platform** (`Core/Data/PeerPlatform`)
+- Source: the peer socket's host name, which is the client's `PlatformUserID` - `ZPlayFabSocket.GetHostName()` returns
+  `m_platformPlayerId.ToString()` (`Steam_7656…`, `Xbox_2533…`, `PlayStation_…`, `Nintendo_…`) over `-crossplay`;
+  `ZSteamSocket.GetHostName()` is the bare Steam64 and the peer is Steam by construction. Built exactly as
+  `ZNet.UpdatePlayerList` builds the history id (Steamworks: `new PlatformUserID(m_steamPlatform, host)`; PlayFab:
+  `PlatformUserID.TryParse(host)`), so the first-join check and the label can never disagree.
+- Label map (`PlatformUserID.m_platform` → text): `Steam` → `PC`, `Xbox` → `Xbox`, `PlayStation` → `PlayStation`,
+  `Nintendo` → `Switch 2` (`Version.Platforms` has no other Nintendo target), anything else → its own name, unparseable →
+  `""`. Account platform only: `RPC_PeerInfo` sends `Version.CurrentVersion.ToString()` without
+  `Version.GetPlatformPrefix()` (`l` / `dw` / `dl` / `ms` / `sw2`), and neither `SimulationDistance` nor `m_playfabId`
+  identifies the device, so Xbox console and Microsoft Store / Game Pass PC are one label.
+- Shown in: `[DiscordNotify] 'Name' (PC) connected. / disconnected. / died. / joined this world for the first time.`
+  (the bracket is omitted when blank); `[Heartbeat] … N player(s) online: Name (PC), Name (Xbox)`; the Discord `{players}`
+  roster (join / leave / boss / heartbeat defaults) and `{platform}`; BarrkBOT `players.<id>.platform`. `players_notes`
+  in the export explains the label. The leave line reads the platform in the `ZNet.Disconnect` prefix while the socket
+  is still attached (`GetHostName` reads a field, no network call).
+- Defaults changed: join `🟢 **{player}** ({platform}) joined **{world}**\n-# {playercount} online · {players}`, leave
+  `🔴 **{player}** ({platform}) left **{world}**\n-# {playercount} online · {players}`, first join `🎉 Welcome **{player}**
+  ({platform}) to **{world}** — first time here! {mention}\n-# Say hi 👋`; death / boss / heartbeat / online / offline
+  unchanged. When the platform is blank and the template contains `({platform})`, the empty bracket is removed
+  before posting.
+- Migration: `MigrateDiscordTemplates` is now staged - `DiscordTemplateStyle` 0 → step 1 (0.7.2 one-liners → current
+  defaults) and step 2; 1 → step 2 only (the three 0.8.0 defaults above → current); 2 = done. Edited templates are
+  never touched. Log: `[Config] N Discord message template(s) were still on an earlier version's default and have been
+  moved to the 0.8.1 style - edit them in section 14 if you preferred the old wording.`, then `DiscordTemplateStyle = 2`.
+- Shape/contract: BarrkBOT `players.<id>.platform` is additive (schema_version stays 3); `players_notes` gained the
+  sentence explaining the label; `BARRKBOT_CONTRACT.md` and the `tools/barrkbot/` samples updated and re-run through the
+  6.1.5 reader (a string scalar rides in the row and is not ranked). `ConnectedCharacter.Platform` / `NameWithPlatform`
+  are the shared spelling. Every section 14 template description lists `{platform}`.
+
 ## 0.8.0
 
 ### Added

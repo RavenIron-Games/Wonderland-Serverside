@@ -39,6 +39,13 @@ namespace Wonderland.Core.Data
         }
 
         public Vector3 Position => Zdo.GetPosition();
+
+        /// <summary>"PC", "Xbox", "PlayStation", "Switch 2" or "" - the account platform behind the connection
+        /// (PeerPlatform), which is all the handshake carries.</summary>
+        public string Platform => PeerPlatform.Label(Peer);
+
+        /// <summary>"Alice (PC)" - the roster spelling shared by the heartbeat, Discord and the export.</summary>
+        public string NameWithPlatform => PeerPlatform.WithLabel(Name, Peer);
     }
 
     /// <summary>

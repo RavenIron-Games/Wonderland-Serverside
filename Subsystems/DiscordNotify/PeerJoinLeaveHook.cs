@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using Splatform;
+using Wonderland.Core.Data;
 
 namespace Wonderland.Subsystems.DiscordNotify
 {
@@ -20,10 +21,11 @@ namespace Wonderland.Subsystems.DiscordNotify
     /// SendPlayerList() -&gt; UpdatePlayerList() -&gt; UpdatePlayerHistory(), which appends any account
     /// not yet in that list - so by the time a postfix runs the new account is ALREADY in the history
     /// and the question has to be asked in a prefix. The prefix builds the PlatformUserID exactly the
-    /// way UpdatePlayerList does (Steamworks: new PlatformUserID(m_steamPlatform, socket host name);
-    /// PlayFab: new PlatformUserID(host name); anything else: None) and hands "already known" to the
+    /// way UpdatePlayerList does (PeerPlatform.Id: Steamworks: new PlatformUserID(m_steamPlatform, socket
+    /// host name); PlayFab: parse the host name; anything else: None) and hands "already known" to the
     /// postfix through __state. Every failure mode (not the server, no peer, no world, invalid ID)
-    /// resolves to "known", so a fault can only ever suppress a welcome, never spam one.
+    /// resolves to "known", so a fault can only ever suppress a welcome, never spam one. The same ID's
+    /// platform half is what every announcement shows as the player's platform (PeerPlatform.Label).
     /// </summary>
     [HarmonyPatch]
     public static class PeerJoinLeaveHook
@@ -50,7 +52,7 @@ namespace Wonderland.Subsystems.DiscordNotify
                 return;
             }
 
-            PlatformUserID id = ResolvePlatformUserID(__instance, peer);
+            PlatformUserID id = PeerPlatform.Id(peer);
             if (!id.IsValid)
             {
                 return;
@@ -78,12 +80,13 @@ namespace Wonderland.Subsystems.DiscordNotify
                 return;
             }
 
-            DiscordNotifySubsystem.AnnounceJoin(peer.m_playerName);
+            PlatformUserID id = PeerPlatform.Id(peer);
+            string platform = PeerPlatform.LabelFor(id.m_platform);
+            DiscordNotifySubsystem.AnnounceJoin(peer.m_playerName, platform);
             if (!__state)
             {
-                DiscordNotifySubsystem.AnnounceFirstJoin(peer.m_playerName);
+                DiscordNotifySubsystem.AnnounceFirstJoin(peer.m_playerName, platform);
             }
-            PlatformUserID id = peer.m_socket != null ? ResolvePlatformUserID(__instance, peer) : PlatformUserID.None;
             BarrkBot.BarrkBotStats.OnPeerJoined(peer.m_uid, id.IsValid ? id.ToString() : "", !__state);
         }
 
@@ -104,22 +107,8 @@ namespace Wonderland.Subsystems.DiscordNotify
                 return;
             }
 
-            DiscordNotifySubsystem.AnnounceLeave(peer.m_playerName, peer);
-        }
-
-        /// <summary>Mirror of the m_onlineBackend switch in ZNet.UpdatePlayerList, so the ID compared
-        /// against m_playerHistory is byte-for-byte the one vanilla stores there.</summary>
-        private static PlatformUserID ResolvePlatformUserID(ZNet znet, ZNetPeer peer)
-        {
-            switch (ZNet.m_onlineBackend)
-            {
-                case OnlineBackendType.Steamworks:
-                    return new PlatformUserID(znet.m_steamPlatform, peer.m_socket.GetHostName());
-                case OnlineBackendType.PlayFab:
-                    return new PlatformUserID(peer.m_socket.GetHostName());
-                default:
-                    return PlatformUserID.None;
-            }
+            // The socket is still attached in this prefix, so the platform can be read one last time.
+            DiscordNotifySubsystem.AnnounceLeave(peer.m_playerName, PeerPlatform.Label(peer), peer);
         }
     }
 }

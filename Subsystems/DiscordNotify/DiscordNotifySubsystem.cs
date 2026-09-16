@@ -6,6 +6,7 @@ using BepInEx.Configuration;
 using HarmonyLib;
 using ServerSync;
 using Wonderland.Core;
+using Wonderland.Core.Data;
 
 namespace Wonderland.Subsystems.DiscordNotify
 {
@@ -145,44 +146,52 @@ namespace Wonderland.Subsystems.DiscordNotify
             }
         }
 
-        public static void AnnounceJoin(string playerName)
+        /// <summary>platform is PeerPlatform.Label for the peer - "PC", "Xbox", "PlayStation", "Switch 2" or ""
+        /// when the game did not say - shown in the log line and offered to the templates as {platform}.</summary>
+        public static void AnnounceJoin(string playerName, string platform)
         {
-            WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' connected.");
+            WonderlandDebug.LogAlways($"[DiscordNotify] {Who(playerName, platform)} connected.");
             if (WonderlandConfig.DiscordNotifyLogins?.Value == true)
             {
-                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordJoinMessage?.Value, player: playerName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordJoinMessage?.Value, player: playerName, platform: platform));
             }
         }
 
         /// <summary>The leaving peer is still in ZNet's peer list when ZNet.Disconnect's prefix runs, so
         /// it is excluded from the roster explicitly - "{playercount} online" means after they've gone.</summary>
-        public static void AnnounceLeave(string playerName, ZNetPeer leavingPeer)
+        public static void AnnounceLeave(string playerName, string platform, ZNetPeer leavingPeer)
         {
-            WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' disconnected.");
+            WonderlandDebug.LogAlways($"[DiscordNotify] {Who(playerName, platform)} disconnected.");
             if (WonderlandConfig.DiscordNotifyLogins?.Value == true)
             {
-                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordLeaveMessage?.Value, player: playerName, excludePeer: leavingPeer));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordLeaveMessage?.Value, player: playerName, platform: platform, excludePeer: leavingPeer));
             }
         }
 
-        public static void AnnounceDeath(string playerName)
+        public static void AnnounceDeath(string playerName, string platform)
         {
             // Always logged locally, regardless of the Discord toggle below or whether a webhook is even
             // configured - otherwise a server with no webhook set up would have zero record of this at all.
-            WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' died.");
+            WonderlandDebug.LogAlways($"[DiscordNotify] {Who(playerName, platform)} died.");
             if (WonderlandConfig.DiscordNotifyDeaths?.Value == true)
             {
-                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordDeathMessage?.Value, player: playerName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordDeathMessage?.Value, player: playerName, platform: platform));
             }
         }
 
-        public static void AnnounceFirstJoin(string playerName)
+        public static void AnnounceFirstJoin(string playerName, string platform)
         {
-            WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' joined this world for the first time.");
+            WonderlandDebug.LogAlways($"[DiscordNotify] {Who(playerName, platform)} joined this world for the first time.");
             if (WonderlandConfig.DiscordNotifyFirstJoin?.Value == true)
             {
-                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordFirstJoinMessage?.Value, player: playerName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordFirstJoinMessage?.Value, player: playerName, platform: platform));
             }
+        }
+
+        /// <summary>'Alice' (PC) - or just 'Alice' when the platform is unknown - for the log lines.</summary>
+        private static string Who(string playerName, string platform)
+        {
+            return string.IsNullOrEmpty(platform) ? $"'{playerName}'" : $"'{playerName}' ({platform})";
         }
 
         public static void AnnounceBossDefeat(string bossName)
@@ -208,21 +217,24 @@ namespace Wonderland.Subsystems.DiscordNotify
         }
 
         /// <summary>
-        /// Fills every placeholder any template may use - {player} {boss} {world} {uptime} {playercount}
-        /// {players} {time} {version} {mention} - so an admin can put any of them in any message. {time} is a
-        /// Discord timestamp markup (&lt;t:unix:R&gt;), which the client renders as a live "5 minutes ago"
-        /// in the reader's own timezone. The roster comes from ZNet's peer list rather than
-        /// ConnectedCharacters because a join is announced from RPC_PeerInfo, before the joining player's
+        /// Fills every placeholder any template may use - {player} {platform} {boss} {world} {uptime}
+        /// {playercount} {players} {time} {version} {mention} - so an admin can put any of them in any message.
+        /// {time} is a Discord timestamp markup (&lt;t:unix:R&gt;), which the client renders as a live "5 minutes
+        /// ago" in the reader's own timezone. {platform} is where {player} plays from (PeerPlatform.Label), and
+        /// every name in {players} carries its own in brackets. The roster comes from ZNet's peer list rather
+        /// than ConnectedCharacters because a join is announced from RPC_PeerInfo, before the joining player's
         /// character ZDO exists - the peer is already ready and named at that point, so "{playercount}
-        /// online" includes them. Lines are right-trimmed so an empty {mention} leaves no dangling space.
+        /// online" includes them. Lines are right-trimmed so an empty {mention} leaves no dangling space, and
+        /// when the platform is unknown the " ({platform})" the default headlines carry collapses to nothing
+        /// rather than posting "**Rohan** () joined".
         /// Substitution is a single pass over the template, so a value is never re-scanned - a character
         /// named "{mention}" or "{world}" stays literal text - and every player-supplied string has a
         /// zero-width space inserted after each '@' before insertion, which turns "@everyone", "@here"
         /// and "&lt;@&amp;id&gt;" into plain text Discord will not parse as a mention. ZNet.RPC_PeerInfo stores
         /// m_playerName verbatim from the client, so names are untrusted input here.
         /// </summary>
-        private static string Fill(string? template, string? player = null, string? boss = null, string? uptime = null,
-            ZNetPeer? excludePeer = null, int? playerCount = null, string? players = null)
+        private static string Fill(string? template, string? player = null, string? platform = null, string? boss = null,
+            string? uptime = null, ZNetPeer? excludePeer = null, int? playerCount = null, string? players = null)
         {
             if (string.IsNullOrEmpty(template))
             {
@@ -240,6 +252,7 @@ namespace Wonderland.Subsystems.DiscordNotify
             var values = new Dictionary<string, string>
             {
                 ["player"] = Neutralize(player),
+                ["platform"] = platform ?? "",
                 ["boss"] = boss ?? "",
                 ["world"] = Neutralize(world),
                 ["uptime"] = uptime ?? "",
@@ -250,12 +263,16 @@ namespace Wonderland.Subsystems.DiscordNotify
                 ["mention"] = WonderlandConfig.DiscordMention?.Value?.Trim() ?? "",
             };
             string filled = PlaceholderPattern.Replace(template!, m => values[m.Groups[1].Value]);
+            if (string.IsNullOrEmpty(platform) && template!.Contains("({platform})"))
+            {
+                filled = filled.Replace(" ()", "").Replace("()", "");
+            }
 
             return string.Join("\n", filled.Split('\n').Select(line => line.TrimEnd()));
         }
 
         private static readonly Regex PlaceholderPattern =
-            new Regex(@"\{(player|boss|world|uptime|playercount|players|time|version|mention)\}", RegexOptions.Compiled);
+            new Regex(@"\{(player|platform|boss|world|uptime|playercount|players|time|version|mention)\}", RegexOptions.Compiled);
 
         /// <summary>Untrusted text can never ping: "@" becomes "@" + U+200B, which Discord renders as-is
         /// and does not parse as @everyone / @here / &lt;@id&gt;.</summary>
@@ -273,7 +290,7 @@ namespace Wonderland.Subsystems.DiscordNotify
                 {
                     if (peer != null && peer != excludePeer && peer.IsReady() && !string.IsNullOrEmpty(peer.m_playerName))
                     {
-                        names.Add(peer.m_playerName);
+                        names.Add(PeerPlatform.WithLabel(peer.m_playerName, peer));
                     }
                 }
             }

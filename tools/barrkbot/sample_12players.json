@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "generated_at": "2026-09-15T20:05:00Z",
-  "source": "Wonderland 0.8.0",
+  "source": "Wonderland 0.8.1",
   "intervals": {
     "write_seconds": 60
   },
@@ -21,7 +21,7 @@
       "Rohan"
     ],
     "peak_players_online": 5,
-    "wonderland_version": "0.8.0",
+    "wonderland_version": "0.8.1",
     "carry_weight_multiplier": 2.0,
     "stamina_regen_multiplier": 3.0,
     "bosses_defeated": [
@@ -41,6 +41,7 @@
     "0000000000000007": {
       "name": "Asfa Wu",
       "online_now": false,
+      "platform": "Switch 2",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 8,
@@ -50,6 +51,7 @@
     "0000000000000006": {
       "name": "baconparticles",
       "online_now": false,
+      "platform": "PlayStation",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 7,
@@ -59,6 +61,7 @@
     "0000000000000002": {
       "name": "CalmyCat",
       "online_now": true,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 3,
@@ -68,6 +71,7 @@
     "0000000000000001": {
       "name": "Cpt JD",
       "online_now": true,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 2,
@@ -77,6 +81,7 @@
     "-2614115181": {
       "name": "dobbs831",
       "online_now": false,
+      "platform": "Xbox",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 11,
@@ -86,6 +91,7 @@
     "0000000000000008": {
       "name": "Jacket11",
       "online_now": false,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 9,
@@ -95,6 +101,7 @@
     "0000000000000009": {
       "name": "joelance1988",
       "online_now": false,
+      "platform": "Switch 2",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 10,
@@ -104,6 +111,7 @@
     "-1833530446": {
       "name": "Karmatronic",
       "online_now": false,
+      "platform": "PlayStation",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 12,
@@ -113,6 +121,7 @@
     "0000000000000005": {
       "name": "Revezunds",
       "online_now": false,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 6,
@@ -122,6 +131,7 @@
     "0000000000000004": {
       "name": "rosa98",
       "online_now": false,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 5,
@@ -131,6 +141,7 @@
     "0000000000000003": {
       "name": "SuperKamiGuru",
       "online_now": false,
+      "platform": "Xbox",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 4,
@@ -140,6 +151,7 @@
     "0000000000000000": {
       "name": "The Rohan",
       "online_now": true,
+      "platform": "PC",
       "first_seen_at": "2026-09-15T15:00:00Z",
       "last_seen_at": "2026-09-15T20:04:55Z",
       "sessions_alltime": 1,
@@ -147,7 +159,7 @@
       "deaths_alltime": 0
     }
   },
-  "players_notes": "connected_seconds_alltime is server-measured connection time, not the character's playtime - never compare it with another mod's playtime. sessions_alltime counts connections, not logins per day. deaths_alltime is deaths the server saw. welcomed_at only exists for accounts first seen after 0.8.0.",
+  "players_notes": "connected_seconds_alltime is server-measured connection time, not the character's playtime - never compare it with another mod's playtime. sessions_alltime counts connections, not logins per day. deaths_alltime is deaths the server saw. welcomed_at only exists for accounts first seen after 0.8.0. platform is the account platform they last connected from - PC (Steam), Xbox (console or PC Game Pass), PlayStation, Switch 2 - or empty if unknown.",
   "players_not_achievements": [
     "deaths_alltime",
     "sessions_alltime"

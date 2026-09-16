@@ -59,7 +59,7 @@ namespace Wonderland.Subsystems.DiscordNotify
             LastDead[playerId] = isDead;
             if (isDead && !wasDead)
             {
-                DiscordNotifySubsystem.AnnounceDeath(character.Name);
+                DiscordNotifySubsystem.AnnounceDeath(character.Name, character.Platform);
                 BarrkBot.BarrkBotStats.OnDeath(playerId, character.Name);
             }
         }
