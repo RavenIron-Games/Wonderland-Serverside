@@ -8,8 +8,13 @@ namespace Wonderland.Subsystems.ItemFlow
 {
     /// <summary>
     /// Two triggers sharing one "move items toward a container" engine:
-    ///  - Drop-to-chest: every tracked container gets a periodic radius sweep for matching ground
-    ///    items (match-required - a container only tops up an item type it already holds).
+    ///  - Drop-to-chest (match-required - a container only tops up an item type it already holds), in
+    ///    two passes since 0.8.3: a near-player pass every VacuumInterval that starts from the ground
+    ///    items around each connected player and only loads the containers within VacuumRadius of one
+    ///    of them (nothing on the ground, nothing loaded - the steady state), plus the world-wide
+    ///    round-robin over every container type for chests nobody is near. The round-robin alone was
+    ///    the 0.8.2 complaint "vacuum takes too long": 64 container types x a 600k-ZDO world at 25
+    ///    chunks per pass gave any one chest its turn about every half minute.
     ///  - Auto-harvest: event-driven since 0.8.2. The picking client's own "RPC_SetPicked" broadcast
     ///    (the one wire-visible event of every pick, crops included) reaches the server's ZRoutedRpc and
     ///    HarvestTriggerPatch hands it to OnPickedRpc; half a second later the radius around that plant is
@@ -29,12 +34,39 @@ namespace Wonderland.Subsystems.ItemFlow
         private static readonly List<ZDO> _scanBuffer = new List<ZDO>();
         private static readonly HashSet<ZDOID> _destroyedThisBatch = new HashSet<ZDOID>();
         private static readonly List<ZDO> _pendingGroundDestroy = new List<ZDO>();
+        private static readonly HashSet<int> _containerPrefabHashes = new HashSet<int>();
+        private static readonly HashSet<int> _itemDropPrefabHashes = new HashSet<int>();
+        private static readonly HashSet<ZDOID> _visitedThisPass = new HashSet<ZDOID>();
+        private static readonly List<ZDO> _groundBuffer = new List<ZDO>();
+        private static readonly List<ZDO> _groundItems = new List<ZDO>();
+        private static readonly List<ZDO> _nearBuffer = new List<ZDO>();
         private static readonly Dictionary<ZDOID, long> _harvestedAt = new Dictionary<ZDOID, long>();
         private const int MaxTrackedPickables = 50000;
 
         public static void Initialize()
         {
             _containerScanner = new ZdoSpatialQuery.PrefabSetScanner(ContainerRegistry.PrefabNames);
+
+            _containerPrefabHashes.Clear();
+            foreach (string name in ContainerRegistry.PrefabNames)
+            {
+                _containerPrefabHashes.Add(name.GetStableHashCode());
+            }
+
+            // Every prefab that is a dropped item, hashed the way ZDO.GetPrefab reports it (ZNetScene keys
+            // its prefab table by name.GetStableHashCode). Built here rather than borrowed from
+            // WaterBuoyancyEngine so the vacuum does not depend on a sibling feature's init order.
+            _itemDropPrefabHashes.Clear();
+            if (ZNetScene.instance != null)
+            {
+                foreach (GameObject prefab in ZNetScene.instance.m_prefabs)
+                {
+                    if (prefab != null && prefab.GetComponent<ItemDrop>() != null)
+                    {
+                        _itemDropPrefabHashes.Add(prefab.name.GetStableHashCode());
+                    }
+                }
+            }
         }
 
         public static void OnUpdate(float dt)
@@ -44,13 +76,19 @@ namespace Wonderland.Subsystems.ItemFlow
                 return;
             }
 
+            // Ground stacks moved last frame are gone from the sector index by now (their DestroyZDO went
+            // out in ZDOMan.Update), so the "already moved" set starts empty each frame.
+            _destroyedThisBatch.Clear();
+
             if (WonderlandConfig.VacuumEnabled?.Value == true)
             {
                 _vacuumTimer += dt;
                 if (_vacuumTimer >= (WonderlandConfig.VacuumInterval?.Value ?? 2f))
                 {
                     _vacuumTimer = 0f;
+                    BeginVacuumPass();
                     ProcessVacuumBatch();
+                    ProcessVacuumNearPlayers();
                 }
             }
 
@@ -74,10 +112,22 @@ namespace Wonderland.Subsystems.ItemFlow
             }
         }
 
+        /// <summary>One pass = one clear of the visited-container set, so a pass never loads the same chest
+        /// twice. _destroyedThisBatch (ground stacks already moved and queued for destruction) is NOT
+        /// cleared here but once per frame in OnUpdate: a queued DestroyZDO only leaves the sector index
+        /// in ZDOMan.Update, so a sweep's instant vacuum running later in the same frame would otherwise
+        /// see a stack the regular pass had just moved and move it a second time.</summary>
+        private static void BeginVacuumPass()
+        {
+            _visitedThisPass.Clear();
+        }
+
+        /// <summary>The world-wide background round-robin: VacuumBatchSize chunks of the container-type
+        /// scanner per pass. Covers chests nobody is standing near (and carries the overflow guard and
+        /// cache drain to them); latency here scales with world size by design.</summary>
         private static void ProcessVacuumBatch()
         {
             _scanBuffer.Clear();
-            _destroyedThisBatch.Clear();
             int budget = Mathf.Max(1, WonderlandConfig.VacuumBatchSize?.Value ?? 25);
             for (int i = 0; i < budget; i++)
             {
@@ -86,8 +136,76 @@ namespace Wonderland.Subsystems.ItemFlow
 
             foreach (ZDO containerZdo in _scanBuffer)
             {
-                ProcessContainer(containerZdo);
+                if (_visitedThisPass.Add(containerZdo.m_uid))
+                {
+                    ProcessContainer(containerZdo);
+                }
             }
+        }
+
+        /// <summary>The pass that makes drop-to-chest feel instant: around each connected player, only the
+        /// containers that actually have a loose item within VacuumRadius are loaded. With nothing on the
+        /// ground it costs one sector query per player and no container I/O at all.</summary>
+        private static void ProcessVacuumNearPlayers()
+        {
+            float reach = WonderlandConfig.VacuumNearPlayersRadius?.Value ?? 32f;
+            float vacuumRadius = WonderlandConfig.VacuumRadius?.Value ?? 10f;
+            foreach (ConnectedCharacter character in ConnectedCharacters.All())
+            {
+                VacuumAround(character.Position, reach, vacuumRadius);
+            }
+        }
+
+        /// <summary>Loads and processes every container within <paramref name="vacuumRadius"/> of at least
+        /// one ground item that lies within <paramref name="reach"/> of <paramref name="center"/>. Returns how
+        /// many containers were processed. Ground items first: no loose item, no container load.</summary>
+        private static int VacuumAround(Vector3 center, float reach, float vacuumRadius)
+        {
+            if (ZNetScene.instance == null)
+            {
+                return 0;
+            }
+
+            _groundItems.Clear();
+            foreach (ZDO zdo in ZdoSpatialQuery.FindNear(center, reach, _groundBuffer))
+            {
+                if (_itemDropPrefabHashes.Contains(zdo.GetPrefab()) && !_destroyedThisBatch.Contains(zdo.m_uid))
+                {
+                    _groundItems.Add(zdo);
+                }
+            }
+            if (_groundItems.Count == 0)
+            {
+                return 0;
+            }
+
+            float radiusSqr = vacuumRadius * vacuumRadius;
+            int processed = 0;
+            foreach (ZDO containerZdo in ZdoSpatialQuery.FindNear(center, reach + vacuumRadius, _nearBuffer))
+            {
+                if (!_containerPrefabHashes.Contains(containerZdo.GetPrefab()) || _visitedThisPass.Contains(containerZdo.m_uid))
+                {
+                    continue;
+                }
+                Vector3 position = containerZdo.GetPosition();
+                bool hasLooseItemNearby = false;
+                for (int i = 0; i < _groundItems.Count; i++)
+                {
+                    if ((_groundItems[i].GetPosition() - position).sqrMagnitude <= radiusSqr)
+                    {
+                        hasLooseItemNearby = true;
+                        break;
+                    }
+                }
+                if (!hasLooseItemNearby)
+                {
+                    continue;
+                }
+                _visitedThisPass.Add(containerZdo.m_uid);
+                ProcessContainer(containerZdo);
+                processed++;
+            }
+            return processed;
         }
 
         private static void ProcessContainer(ZDO containerZdo)
@@ -671,6 +789,13 @@ namespace Wonderland.Subsystems.ItemFlow
                 if (swept > 0)
                 {
                     WonderlandDebug.LogInfo($"[AutoHarvest] {prefab.name} picked by '{trigger.PickerName}' - swept {swept} more within {radius:0} m.");
+                    if (WonderlandConfig.VacuumEnabled?.Value == true)
+                    {
+                        // The drops exist as ZDOs the moment DropItem returns, so a matching chest in range
+                        // takes them now rather than on the next pass - "one keypress, the chest fills".
+                        BeginVacuumPass();
+                        VacuumAround(trigger.Position, radius, WonderlandConfig.VacuumRadius?.Value ?? 10f);
+                    }
                 }
                 if (swept >= MaxHarvestsPerSweep && _pendingTriggers.Count < MaxPendingTriggers)
                 {

@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.8.3
+
+### Changed
+- **Drop-to-chest now starts from the player, not from a world-wide list.** Every vacuum pass first looks at the
+  ground around each connected player and only opens the containers that actually have a loose item within
+  `VacuumRadius` of them, so a stack dropped beside you is in its chest within a couple of seconds, and an
+  auto-harvest sweep's loot is pulled in the same instant it lands. The world-wide round-robin still runs behind it
+  for chests nobody is near. Until 0.8.2 that round-robin was the only pass: 64 container types, 25 chunks every 2
+  seconds, across a 600,000-object world - any one chest got its turn roughly every half minute.
+- **New setting `VacuumNearPlayersRadius`** (default 32 m, 8-64) in `2 - Vacuum & Auto-Harvest`: how far around each
+  player the ground is checked. The `VacuumInterval` and `VacuumBatchSize` descriptions now say which pass they
+  drive. Existing configs pick the new key up with its default on first load.
+- **New default radii, and they say "radius" now.** `AutoHarvestRadius` defaults to 4.5 (was 8) and `VacuumRadius`
+  to 15 (was 10). Both are radii, so the swept patch is 9 m across - one plot, not the farm - and a chest reaches
+  30 m across; the descriptions spell that out. **Existing servers are migrated:** a radius still on its old
+  default moves to the new one on first load (logged once); a value you had changed is left exactly as it was.
+
+### Reference (the data behind the 0.8.3 entry)
+
+**Two passes per `VacuumInterval`** (`Subsystems/ItemFlow/VacuumEngine.cs`)
+- Order: `BeginVacuumPass()` (clears the visited-container set), `ProcessVacuumBatch()` (the round-robin -
+  `VacuumBatchSize` chunks of the container-type scanner, skipping containers already visited this pass), then
+  `ProcessVacuumNearPlayers()` (one `VacuumAround(character.Position, VacuumNearPlayersRadius, VacuumRadius)` per
+  `ConnectedCharacter`).
+- `VacuumAround(center, reach, vacuumRadius)`: `FindNear(center, reach)` filtered to item-drop prefabs (every
+  ZNetScene prefab carrying an `ItemDrop`, hashed as `ZDO.GetPrefab` reports it) and not already moved this frame;
+  none → return with no container I/O at all; otherwise `FindNear(center, reach + vacuumRadius)` filtered to
+  container prefabs (`ContainerRegistry.PrefabNames`), and only a container with a loose item within `vacuumRadius`
+  is marked visited and handed to `ProcessContainer` (unchanged: busy check, exclusions, load, overflow guard, cache
+  drain, match-required vacuum, anchor, save, splash effect, ground destroy).
+- Post-sweep: in `ProcessPendingHarvests`, a sweep that harvested at least one plant is followed by
+  `BeginVacuumPass(); VacuumAround(trigger.Position, AutoHarvestRadius, VacuumRadius)`. `ItemDrop.DropItem`
+  instantiates the item on the server, `ZNetView.Awake` creates its ZDO at that position and `Save()` writes the
+  stack, so the drops are already in the sector index when the vacuum looks.
+- `_destroyedThisBatch` (ground stacks already moved and queued for `DestroyZDO`) is cleared once per frame at the
+  top of `OnUpdate`, never per pass: a queued destroy only leaves the sector index in `ZDOMan.Update`, so a mid-frame
+  clear would let the post-sweep vacuum move a stack the regular pass had just moved.
+- Cost at defaults: two 9-sector queries per player per pass (`ceil(32/64)` and `ceil(42/64)` both round to one
+  ring) and zero container loads when nothing is on the ground; at the maxima (64 + 50 m) the second query is a
+  25-sector ring.
+- Defaults and migration: `AutoHarvestRadius` 8 → 4.5, `VacuumRadius` 10 → 15. `VacuumDefaultsStyle` (internal,
+  section 2, `0` on any older file) stamps how far a file's radii have been rebased; `MigrateVacuumDefaults` moves an
+  entry still holding its exact old default (`8` / `10`) to the new default and logs `[Config] N radius setting(s)
+  were still on an earlier version's default and have been moved to the 0.8.3 defaults (AutoHarvestRadius 4.5,
+  VacuumRadius 15 - each a radius, so twice that across) - set them back in section 2 if you preferred the old
+  reach.`, then writes `VacuumDefaultsStyle = 1`. Same one-shot rule as the Discord template migration.
+- Live tuning on 2026-09-16: the box already runs `AutoHarvestRadius = 4.5`, `VacuumRadius = 15` (so the migration
+  moves nothing there), plus `VacuumInterval = 1`, `VacuumBatchSize = 60` set before 0.8.3; with the near-player pass
+  the interval and batch can go back to 2 / 25.
+
 ## 0.8.2
 
 ### Fixed

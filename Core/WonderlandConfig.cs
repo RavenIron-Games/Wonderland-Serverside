@@ -14,6 +14,8 @@ namespace Wonderland.Core
         public static ConfigEntry<float>? VacuumInterval;
         public static ConfigEntry<int>? VacuumBatchSize;
         public static ConfigEntry<float>? VacuumRadius;
+        public static ConfigEntry<float>? VacuumNearPlayersRadius;
+        public static ConfigEntry<int>? VacuumDefaultsStyle;
         public static ConfigEntry<float>? ContainerLinkRadius;
         public static ConfigEntry<string>? VacuumExcludedContainers;
         public static ConfigEntry<string>? VacuumExcludedItems;
@@ -165,9 +167,11 @@ namespace Wonderland.Core
             HeartbeatIntervalMinutes = BindLocal(config, "1 - General", "HeartbeatIntervalMinutes", 15f, "Minutes between heartbeat summary lines (the log one above, and the optional Discord one in section 14 unless DiscordHeartbeatIntervalMinutes gives it its own).");
 
             VacuumEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEnabled", true, "Enable containers auto-vacuuming matching ground items nearby. Match-required: only tops up an item type a container already holds.");
-            VacuumInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumInterval", 2f, "Seconds between vacuum sweep batches.", 0.5f, 30f);
-            VacuumBatchSize = BindSyncedInt(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumBatchSize", 25, "How many container ZDOs to advance the round-robin scanner by each sweep.", 1, 500);
-            VacuumRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumRadius", 10f, "Radius around a container to vacuum matching ground items from.", 1f, 50f);
+            VacuumInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumInterval", 2f, "Seconds between vacuum passes - each pass checks the ground around every connected player (VacuumNearPlayersRadius) and advances the world-wide round-robin by VacuumBatchSize.", 0.5f, 30f);
+            VacuumBatchSize = BindSyncedInt(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumBatchSize", 25, "How many chunks of the world-wide container round-robin to advance per pass. That background pass exists for chests nobody is standing near; the near-player pass is what makes drops disappear within seconds, so this rarely needs raising.", 1, 500);
+            VacuumRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumRadius", 15f, "Radius, in metres, around a container within which matching ground items are pulled in - a radius, not a width, so the default 15 reaches 30 m across.", 1f, 50f);
+            VacuumNearPlayersRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumNearPlayersRadius", 32f, "Ground items within this distance of a connected player are checked every VacuumInterval, so a drop beside you is in its chest within seconds, and an auto-harvest sweep's drops are vacuumed the moment they land. Only containers within VacuumRadius of a loose item are touched.", 8f, 64f);
+            VacuumDefaultsStyle = BindLocal(config, "2 - Vacuum & Auto-Harvest", "VacuumDefaultsStyle", 0, "Internal: which shipped defaults this file's radii have already been rebased to (1 = 0.8.3: AutoHarvestRadius 4.5, VacuumRadius 15). Leave it alone - it only exists so a radius you deliberately set back to an old default is not moved again on the next start.");
             ContainerLinkRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "ContainerLinkRadius", 10f, "Radius used to find a sibling container for the capacity overflow guard.", 1f, 50f);
             VacuumExcludedContainers = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumExcludedContainers", "", "Comma-separated container prefab names to exclude from vacuuming entirely.");
             VacuumExcludedItems = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumExcludedItems", "", "Comma-separated prefab names never to vacuum or auto-harvest. The item name (Carrot) covers both; for auto-harvest the plant's own prefab name (Pickable_Carrot) works too.");
@@ -175,7 +179,7 @@ namespace Wonderland.Core
             VacuumEffectPrefab = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEffectPrefab", "vfx_fermenter_add", "Vanilla effect prefab to spawn at a container when it vacuums ground items (default: 'vfx_fermenter_add' for the fermenter liquid splash).");
             VacuumSoundPrefab = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumSoundPrefab", "sfx_fermenter_add", "Vanilla sound effect prefab to spawn at a container when it vacuums ground items (default: 'sfx_fermenter_add' for the fermenter splash sound; leave empty to disable sound).");
             AutoHarvestEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AutoHarvestEnabled", true, "When a player picks something, every other ripe one of the same type within AutoHarvestRadius is harvested with it and its items drop where it grew, for a matching container to vacuum. Covers berry bushes, mushrooms, thistle, dandelion, branches, flint, core stands and every farm crop (carrot, turnip, onion, barley, flax, seed plants, magecap, jotun puffs). Ores, tar, and dungeon loot are never swept.");
-            AutoHarvestRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AutoHarvestRadius", 8f, "Radius around the picked pickable to sweep for others of the same type. The sweep runs half a second after the pick.", 1f, 30f);
+            AutoHarvestRadius = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AutoHarvestRadius", 4.5f, "Radius, in metres, around the picked plant that is swept for others of the same type. A radius, not a width: the swept circle is twice this across, so the default 4.5 covers a 9 m wide patch - one plot, not the whole farm. The sweep runs half a second after the pick.", 1f, 30f);
             AllItemsFloatEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "AllItemsFloatEnabled", true, "Force all dropped items (metals, ores, armor, weapons, serpent scales) to float on water, completely server-side. Vanilla clients see them bobbing on the water surface and can collect them from boats or while swimming.");
             FloatSurfaceOffset = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "FloatSurfaceOffset", -0.25f, "Elevation offset relative to water level where floating items rest (-0.25 places items naturally half-submerged in the waterline).", -2f, 2f);
             FloatSweepInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "FloatSweepInterval", 0.3f, "Seconds between water buoyancy scans around connected players.", 0.1f, 10f);
@@ -288,6 +292,33 @@ namespace Wonderland.Core
 
             MigrateLegacyConfig(config);
             MigrateDiscordTemplates(config);
+            MigrateVacuumDefaults(config);
+        }
+
+        /// <summary>Highest radii-defaults style this build knows (VacuumDefaultsStyle). 1 = 0.8.3: AutoHarvestRadius
+        /// 8 -> 4.5 (one plot, not the farm) and VacuumRadius 10 -> 15 (30 m across).</summary>
+        private const int CurrentVacuumDefaultsStyle = 1;
+
+        /// <summary>Same rule as MigrateDiscordTemplates: a radius still holding its exact previous default belongs
+        /// to the mod and follows the new default; anything an admin changed is left alone. One-shot per style.</summary>
+        private static void MigrateVacuumDefaults(ConfigFile config)
+        {
+            if (VacuumDefaultsStyle == null || VacuumDefaultsStyle.Value >= CurrentVacuumDefaultsStyle)
+            {
+                return;
+            }
+            int moved = 0;
+            if (VacuumDefaultsStyle.Value < 1) // 0.8.2 and earlier radii -> 0.8.3
+            {
+                moved += MoveOffOldDefault(AutoHarvestRadius, 8f);
+                moved += MoveOffOldDefault(VacuumRadius, 10f);
+            }
+            if (moved > 0)
+            {
+                WonderlandDebug.LogAlways($"[Config] {moved} radius setting(s) were still on an earlier version's default and have been moved to the {WonderlandPlugin.ModVersion} defaults (AutoHarvestRadius {AutoHarvestRadius?.Value:0.#}, VacuumRadius {VacuumRadius?.Value:0.#} - each a radius, so twice that across) - set them back in section 2 if you preferred the old reach.");
+            }
+            VacuumDefaultsStyle.Value = CurrentVacuumDefaultsStyle;
+            config.Save();
         }
 
         /// <summary>Highest template style this build knows; DiscordTemplateStyle records how far a .cfg has been
@@ -343,6 +374,16 @@ namespace Wonderland.Core
                 return 0;
             }
             entry.Value = (string)entry.DefaultValue;
+            return 1;
+        }
+
+        private static int MoveOffOldDefault(ConfigEntry<float>? entry, float previousDefault)
+        {
+            if (entry == null || entry.Value != previousDefault)
+            {
+                return 0;
+            }
+            entry.Value = (float)entry.DefaultValue;
             return 1;
         }
 

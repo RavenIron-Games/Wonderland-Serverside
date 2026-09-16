@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "generated_at": "2026-09-15T20:05:00Z",
-  "source": "Wonderland 0.8.2",
+  "source": "Wonderland 0.8.3",
   "intervals": {
     "write_seconds": 60
   },
@@ -21,7 +21,7 @@
       "Rohan"
     ],
     "peak_players_online": 5,
-    "wonderland_version": "0.8.2",
+    "wonderland_version": "0.8.3",
     "carry_weight_multiplier": 2.0,
     "stamina_regen_multiplier": 3.0,
     "bosses_defeated": [

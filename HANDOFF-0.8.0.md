@@ -322,3 +322,35 @@ never throws outward, or `RPC_RoutedRPC` would not relay the message to the othe
    blink and no drag may cancel; `parked` lines should still appear now and then. If it still hiccups, the live
    tuning is the next lever, hot-reloaded: `ContainerRowsInterval` 2 -> 5, `ContainerRowsBatchSize` 125 -> 25,
    `SortInterval` 15 -> 30, `SortBatchSize` 100 -> 10.
+
+## 12. 2026-09-16 (midday): 0.8.2 live and confirmed; vacuum goes near-player first (→ 0.8.3)
+
+**0.8.2 deployed 11:56:56, boot clean:** `Loading [Wonderland 0.8.2]`, `Successfully applied Harmony patch set:
+HarvestTriggerPatch`, one ContainerRows announce (18 of 64 types), zero `eligible set refreshed` lines, zero
+warnings. First crop sweep at 11:59: `[AutoHarvest] Pickable_Carrot picked by 'Coffee' - swept 15 more within 8 m.`
+followed by 30 carrots vacuumed. Rohan confirmed the expanded-chest hiccup is gone ("no delay noticed when placing
+items in chest anymore"). Also published to Hexium.
+
+**Live cfg edits Rohan asked me to make** (the read-only rule was lifted for these keys only, `sed` on the one line
+each, file never displayed): `AutoHarvestRadius = 10`, `VacuumRadius = 20` (12:03), then `VacuumInterval = 1`,
+`VacuumBatchSize = 60` (12:04) for "vac time needs to be quicker". Both hot-reloaded (`[Config] config file changed
+on disk` at log lines 788 and 824).
+
+**Why the vacuum was slow, and 0.8.3:** the vacuum was only the world-wide round-robin over 64 container prefab
+types at 25 chunks per 2 s; on the 604,766-ZDO live world that is roughly half a minute per chest. 0.8.3 adds a
+near-player pass (`VacuumEngine.ProcessVacuumNearPlayers` → `VacuumAround`): ground items around each connected
+player first, then only the containers within `VacuumRadius` of one of them, plus an instant `VacuumAround` right
+after every auto-harvest sweep. New key `VacuumNearPlayersRadius` (32 m). `_destroyedThisBatch` is now cleared once
+per frame (a per-pass clear would have let the post-sweep vacuum double-move a stack). Build 0/0; the reviewer
+workflow for it was killed twice by session interrupts, so the verification is mine plus a background second opinion.
+
+**Defaults (Rohan, 12:16):** `AutoHarvestRadius` 4.5 and `VacuumRadius` 15 are the shipped defaults from 0.8.3, with a
+`VacuumDefaultsStyle` stamp + `MigrateVacuumDefaults` (float `MoveOffOldDefault`) so files still on 8 / 10 move over
+once; the live cfg already holds 4.5 / 15, so its first 0.8.3 boot should log no radius migration line and write
+`VacuumDefaultsStyle = 1`.
+
+**Test after the 0.8.3 boot:** (1) `Starting Wonderland v0.8.3`; (2) drop a stack of something a nearby chest
+already holds and count seconds to `Vacuum moved` (expect ≤ VacuumInterval); (3) pick one carrot in a patch: the
+`[AutoHarvest] … swept N` line should be followed by `Vacuum moved` lines in the same second; (4) then set
+`VacuumInterval = 2` and `VacuumBatchSize = 25` back and re-check step 2.
+
