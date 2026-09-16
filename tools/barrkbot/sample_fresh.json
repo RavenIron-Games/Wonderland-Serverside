@@ -1,0 +1,55 @@
+{
+  "schema_version": 3,
+  "generated_at": "2026-09-15T20:05:00Z",
+  "source": "Wonderland 0.8.0",
+  "intervals": {
+    "write_seconds": 60
+  },
+  "session_started_at": "2026-09-15T14:00:00Z",
+  "tracking_since": "2026-09-15T15:00:00Z",
+  "export_notes": "All figures are measured by the server itself, never reported by a client. server is live and resets on restart (session_started_at); players and lifetime are cumulative since tracking_since. An empty players map means nothing recorded yet, not nobody.",
+  "server": {
+    "name": "Wubarrks Vanilla Bean",
+    "world_name": "VanillaBean01",
+    "online": true,
+    "world_day": 1,
+    "known_accounts": 0,
+    "uptime_seconds": 21900,
+    "players_online": 0,
+    "players_online_names": [],
+    "peak_players_online": 0,
+    "wonderland_version": "0.8.0",
+    "carry_weight_multiplier": 2.0,
+    "stamina_regen_multiplier": 3.0,
+    "bosses_defeated": [],
+    "bosses_remaining": [
+      "Eikthyr",
+      "The Elder",
+      "Bonemass",
+      "Moder",
+      "Yagluth"
+    ],
+    "bosses_defeated_at": {},
+    "stations_switched_off": 0
+  },
+  "server_notes": "online false means the server was stopped cleanly and players_online is then 0 by definition. players_online is who is connected right now. known_accounts is how many distinct accounts have ever joined this world (the game's own history). bosses_defeated / bosses_remaining cover the five classic bosses and are the world's own progress, not one player's kills; bosses_defeated_at only has dates for defeats seen since Wonderland 0.8.0.",
+  "players": {},
+  "players_notes": "connected_seconds_alltime is server-measured connection time, not the character's playtime - never compare it with another mod's playtime. sessions_alltime counts connections, not logins per day. deaths_alltime is deaths the server saw. welcomed_at only exists for accounts first seen after 0.8.0.",
+  "players_not_achievements": [
+    "deaths_alltime",
+    "sessions_alltime"
+  ],
+  "lifetime": {
+    "production_supply_items_fed_alltime": 0,
+    "production_supply_items_fed_by_item": {},
+    "vacuum_items_moved_alltime": 0,
+    "vacuum_items_moved_by_item": {},
+    "item_cache_items_stored_alltime": 0,
+    "item_cache_items_returned_alltime": 0,
+    "starter_kit_items_granted_alltime": 0,
+    "raids_blocked_alltime": 0,
+    "spawns_culled_alltime": 0,
+    "security_flags_total_alltime": 0
+  },
+  "lifetime_notes": "Items moved by Wonderland's automation (fed to stations, vacuumed into chests, cached) - never a player's own actions; never sum, rank or compare them across mods or against a player. raids_blocked and spawns_culled are world-governor interventions. security_flags_total_alltime is server-side integrity flags - suspicions for the admin, never verdicts, and deliberately not broken down per player."
+}

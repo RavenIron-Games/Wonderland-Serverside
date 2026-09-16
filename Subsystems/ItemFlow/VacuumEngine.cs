@@ -21,8 +21,9 @@ namespace Wonderland.Subsystems.ItemFlow
     /// </summary>
     public static class VacuumEngine
     {
-        private const string VacuumTag = "Vacuum";
-        private const string HarvestTag = "AutoHarvest";
+        // Ledger tags - BarrkBotExport sums them, so they are shared rather than repeated.
+        public const string VacuumTag = "Vacuum";
+        public const string HarvestTag = "AutoHarvest";
 
         private static ZdoSpatialQuery.PrefabSetScanner _containerScanner;
         private static float _vacuumTimer;

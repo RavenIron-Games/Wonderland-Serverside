@@ -6,7 +6,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Crossplay](https://img.shields.io/badge/Crossplay-PlayFab%2FXbox_Ready-purple.svg)]()
-[![Valheim 1.0](https://img.shields.io/badge/Valheim-1.0.7_Server-green.svg)]()
+[![Valheim 1.0](https://img.shields.io/badge/Valheim-1.0.12_Server-green.svg)]()
 
 *No client install, ever. The server does the work. Built and live-tested on Valheim 1.0.*
 
@@ -41,6 +41,7 @@ experience.
   - [🛡️ Security & Anti-Cheat](#️-security--anti-cheat)
   - [📣 Discord Notify](#-discord-notify)
   - [💓 Heartbeat](#-heartbeat)
+  - [🤖 BarrkBOT Export](#-barrkbot-export)
   - [🧬 Valheim 1.0 Native](#-valheim-10-native)
 - [⚙️ Configuration](#️-configuration)
 - [📦 Dependencies](#-dependencies)
@@ -89,7 +90,7 @@ Each roster slot is its own on/off switch in `16 - Status Effect Roster`:
 All three run-speed slots on by default stack to **+40% run speed while actively steering a ship** (+30% on land, since `GP_Moder`'s +10% only applies at the helm). This matches what that guardian power is really for in vanilla — sailing against the wind — rather than being an always-on speed buff. Detection is read directly off the ship's own steering-user field (`ZDOVars.s_user`, the same one the game itself sets the instant you take the wheel and clears the instant you let go) — confirmed live tracking correctly across two different ships. `BuffRoster_GP_Moder_RequireBoat` (on by default) is what scopes it to steering specifically — standing on deck without hands on the wheel does not count — turn that setting off if you'd rather have it always-on everywhere instead. Because there's no vanilla channel to force an effect off early, disabling a slot means "stop renewing it" — it fades out on its own natural duration rather than being instantly revoked.
 
 ### 🔥 Production Supply
-Fireplaces, hearths, torches, smelters, and kilns stay fed from linked containers within range — **fuel and process material both**, tracked separately, so a smelter never runs dry of ore just because its coal bin is full. Runs independent of anyone being online: a base doesn't go dark and a smelter doesn't go idle because its owner logged off. A configurable **reserve floor** means a source container is never drained below a minimum stock, so automation can't strip a stockpile out from under you. Charcoal kilns are only loaded with the wood types in `KilnWoodTypes` — plain wood by default, so fine wood, core wood and blackwood in a linked chest are never turned into coal behind your back — and any station can be switched off by a player standing next to it (see Player Controls).
+Fireplaces, hearths, torches, smelters and kilns keep themselves fed from the chests around them — **fuel and ore tracked separately**, so a smelter never idles on a full coal bin. It works whether or not anyone is online, never drains a chest below your **reserve floor**, only ever loads a charcoal kiln with the wood you allow, and any station can be switched off with an emote (see Player Controls). 0.8.0 fixes the one thing that used to go wrong: Wonderland no longer takes a station away from the player using it, so hand-feeding a smelter that is also being auto-fed just works — no more *"the smelter ate my silver"* — and the stations you leave behind through a portal keep working while you're away.
 
 ### 🗂️ Background Sort
 A slow, low-frequency pass quietly merges partial stacks of the same item across a base's containers. Consolidation only — a stack that's already whole is never touched, and nothing gets relocated while you're actively looking at it.
@@ -136,13 +137,16 @@ Split honestly into what the server can actually do something about:
 - **Structural blind spots, named honestly** — max stamina, skill levels, save-file edits, and ESP-style rendering cheats never reach the server at all, on any Valheim build; no amount of server-side logic changes that. (Note: carry capacity was previously in this list, but was unlocked in 0.6.0 via Valheim 1.0's native World Modifier system). Combat hits are in the same bucket: a damage RPC goes to the victim's own client and the server only relays it, which is why there is no damage-plausibility check here.
 
 ### 📣 Discord Notify
-Posts server status, player logins, deaths, first-time joins, boss defeats, and an optional periodic heartbeat to a Discord webhook — nothing to install, just paste a webhook URL. Announces once the world finishes loading and again on shutdown, when a player connects or disconnects, when a connected player dies, the first time a character is ever seen in this world, and the first time any of the five classic bosses (Eikthyr, The Elder, Bonemass, Moder, Yagluth) is defeated — all detected purely from server-visible state, never re-announcing history on a later restart. An optional heartbeat post (off by default) shows uptime and who's currently online, on the same timer as the server-log heartbeat below. Deaths, joins, and boss defeats also always get logged to the server console even with no webhook configured, so nothing is silently lost. Message templates (`{world}`/`{player}`/`{boss}`/`{uptime}`/`{playercount}`/`{players}` placeholders, depending on the message) and the display username it posts under are all configurable, and each announcement type can be turned off independently. Entirely **local to this server**: the webhook URL and every setting in this section are never synced to clients, unlike almost everything else in this mod, since a webhook URL is a secret.
+Your community's Discord knows what the server is doing: online and offline, who joined and left, who died, the first time an **account the world has never seen** joins, the first fall of each of the five classic bosses — and, if you want it, a heartbeat with uptime and who's on. Each message is clean Discord markdown — a bold headline with a small grey line beneath it, the live roster where it fits — and every one of them is a template you can rewrite. Optional extras, all off by default: your own avatar, a role to ping on boss kills and newcomers, a heartbeat rhythm of its own. Nothing is ever pinged by accident — not even by a player who names their character `@everyone`. Paste one webhook URL and you're done; it lives on your server and is never synced to clients.
 
 ### 💓 Heartbeat
-A single summary line — world name, uptime, and who's currently online — logged periodically (every 15 minutes by default) so an admin tailing the server log can confirm Wonderland is alive at a glance, without turning on full verbose logging. Shares its interval with the optional Discord heartbeat above. Configurable in `1 - General` (`HeartbeatEnabled`, `HeartbeatIntervalMinutes`).
+A single summary line — world name, uptime, and who's currently online — logged periodically (every 15 minutes by default) so an admin tailing the server log can confirm Wonderland is alive at a glance, without turning on full verbose logging. The optional Discord heartbeat above shares this interval unless given its own (`DiscordHeartbeatIntervalMinutes`). Configurable in `1 - General` (`HeartbeatEnabled`, `HeartbeatIntervalMinutes`).
+
+### 🤖 BarrkBOT Export
+Run BarrkBOT, the community Discord bot that answers members' questions from what the server's mods write down? Wonderland feeds it: who's online, each player's sessions, time on the server, deaths and when it first saw them, world progress, the day count, the rates in force and lifetime tallies of what the automation has fed, vacuumed, cached and granted — all **measured by the server itself**, never taken from a client's word. A clean shutdown tells the bot the server is offline instead of leaving it guessing, and nothing private goes out: account ids stay with the admin. Harmless without BarrkBOT — it's two small files beside your config, and it can be switched off.
 
 ### 🧬 Valheim 1.0 Native
-Built against the Valheim 1.0.7 dedicated-server assemblies and loaded on a real 1.0.7 Linux dedicated server before release. Every game API the mod touches was verified against the 1.0 decompile — including the sector-query API that 1.0 reshaped, which is detected by parameter shape at startup (the older 0.221.x five-argument form is still bridged by reflection, best-effort). The startup log says which path it picked.
+Built against the Valheim 1.0.12 dedicated-server assemblies — the same binary a live Linux dedicated server runs — and every release is booted on that server. Every game API the mod touches was verified against the 1.0 decompile — including the sector-query API that 1.0 reshaped, which is detected by parameter shape at startup (the older 0.221.x five-argument form is still bridged by reflection, best-effort). The startup log says which path it picked.
 
 ---
 
@@ -173,7 +177,8 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 | :--- | :--- | :--- |
 | `VerboseLogging` | `1 - General` | Verbose diagnostic logging. Security findings always log regardless of this setting. |
 | `HeartbeatEnabled` / `HeartbeatIntervalMinutes` | `1 - General` | The periodic "still alive" server-log summary (see Heartbeat above). |
-| *(all of section 14)* | `14 - Discord Notify` | Webhook URL, master switch, which events to announce (server status, logins, deaths, first-time joins, boss defeats, an optional heartbeat), the lifecycle-detection sweep interval, display username, and every message template (`{player}`/`{world}`/`{boss}`/`{uptime}`/`{playercount}`/`{players}` placeholders). Local because a webhook URL is a per-server secret. |
+| `BarrkBotExportEnabled` / `BarrkBotWriteSeconds` | `17 - BarrkBOT Export` | Whether the BarrkBOT export is written, and how often. Local because it describes this server's own files. |
+| *(all of section 14)* | `14 - Discord Notify` | The webhook, which events to announce, the display name, the optional avatar / mention / heartbeat rhythm, and every message template. Local because a webhook URL is a per-server secret. |
 
 **Upgrading from an older release?** Settings carry over automatically on first launch wherever the concept still exists. Anything tied to a removed feature is logged once as a summary and dropped. What changed between releases lives in the changelog, not here.
 
@@ -181,16 +186,17 @@ Settings live in `BepInEx/config/wubarrk.wonderland.cfg`, split into numbered se
 
 ## 📦 Dependencies
 
-> ⚠️ **Requires:** BepInEx (the Valheim 1.0 pack, 5.4.2350 or newer) — and only BepInEx.
+> ⚠️ **Requires:** BepInEx (the Valheim 1.0 pack, 5.4.2350 or newer). Nothing on the client, ever.
 
 | Dependency | Why |
 | :--- | :--- |
 | **BepInExPack Valheim** (denikson) | The mod loader (also provides HarmonyX). |
+| **JsonDotNET** (ValheimModding) | Declared so mod managers install it; the game already ships its own copy, which is enough. |
 
 ## 📥 Installation
 
 Wonderland is a **server-side-only** mod — install it once, on the server, and every connected player benefits with nothing to download.
-Just install Wonderland on the server — the dependency above is pulled in for you.
+Just install Wonderland on the server — the dependencies above are pulled in for you.
 
 **Manual install:**
 1. Install **BepInExPack Valheim** on the server.

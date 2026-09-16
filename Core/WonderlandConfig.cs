@@ -147,14 +147,22 @@ namespace Wonderland.Core
         public static ConfigEntry<string>? DiscordBossDefeatMessage;
         public static ConfigEntry<bool>? DiscordNotifyHeartbeat;
         public static ConfigEntry<string>? DiscordHeartbeatMessage;
+        public static ConfigEntry<float>? DiscordHeartbeatIntervalMinutes;
+        public static ConfigEntry<string>? DiscordAvatarUrl;
+        public static ConfigEntry<string>? DiscordMention;
+        public static ConfigEntry<int>? DiscordTemplateStyle;
+
+        // BarrkBOT export
+        public static ConfigEntry<bool>? BarrkBotExportEnabled;
+        public static ConfigEntry<float>? BarrkBotWriteSeconds;
 
         public static void Bind(ConfigFile config, ConfigSync configSync)
         {
             ServerConfigLocked = BindSynced(config, configSync, "1 - General", "ServerConfigLocked", true, "If true, only server admins can modify synced configuration.");
             configSync.AddLockingConfigEntry(ServerConfigLocked);
             VerboseLogging = BindLocal(config, "1 - General", "VerboseLogging", true, "Enable verbose diagnostic log messages, including every item transfer the mod makes. On by default: a suspected duplication is only diagnosable if the transfer that caused it was already being logged when it happened. Security findings and ledger rejections always log regardless of this setting.");
-            HeartbeatEnabled = BindLocal(config, "1 - General", "HeartbeatEnabled", true, "Log one summary line periodically (see HeartbeatIntervalMinutes below) showing uptime and who's currently online, so an admin tailing the server log can confirm the mod is alive at a glance without needing VerboseLogging's full per-event detail. There's also a Discord version of this in section 14 (DiscordNotifyHeartbeat) - both share this same interval.");
-            HeartbeatIntervalMinutes = BindLocal(config, "1 - General", "HeartbeatIntervalMinutes", 15f, "Minutes between heartbeat summary lines (both the log one above and the optional Discord one in section 14).");
+            HeartbeatEnabled = BindLocal(config, "1 - General", "HeartbeatEnabled", true, "Log one summary line periodically (see HeartbeatIntervalMinutes below) showing uptime and who's currently online, so an admin tailing the server log can confirm the mod is alive at a glance without needing VerboseLogging's full per-event detail. There's also a Discord version of this in section 14 (DiscordNotifyHeartbeat) - it shares this interval by default, or has its own via DiscordHeartbeatIntervalMinutes.");
+            HeartbeatIntervalMinutes = BindLocal(config, "1 - General", "HeartbeatIntervalMinutes", 15f, "Minutes between heartbeat summary lines (the log one above, and the optional Discord one in section 14 unless DiscordHeartbeatIntervalMinutes gives it its own).");
 
             VacuumEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEnabled", true, "Enable containers auto-vacuuming matching ground items nearby. Match-required: only tops up an item type a container already holds.");
             VacuumInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumInterval", 2f, "Seconds between vacuum sweep batches.", 0.5f, 30f);
@@ -243,10 +251,10 @@ namespace Wonderland.Core
             DiscordNotifyServerStatus = BindLocal(config, "14 - Discord Notify", "DiscordNotifyServerStatus", true, "Announce when the server comes online (world finished loading) and when it shuts down.");
             DiscordNotifyLogins = BindLocal(config, "14 - Discord Notify", "DiscordNotifyLogins", true, "Announce when a player connects or disconnects.");
             DiscordUsername = BindLocal(config, "14 - Discord Notify", "DiscordUsername", "Wonderland", "Display name the webhook posts under in Discord. Empty uses the webhook's own configured name.");
-            DiscordJoinMessage = BindLocal(config, "14 - Discord Notify", "DiscordJoinMessage", "🟢 **{player}** joined the server", "Message posted when a player connects. {player} is replaced with their name.");
-            DiscordLeaveMessage = BindLocal(config, "14 - Discord Notify", "DiscordLeaveMessage", "🔴 **{player}** left the server", "Message posted when a player disconnects. {player} is replaced with their name.");
-            DiscordServerOnlineMessage = BindLocal(config, "14 - Discord Notify", "DiscordServerOnlineMessage", "🟢 **{world}** server is online", "Message posted once the world has finished loading. {world} is replaced with the world name.");
-            DiscordServerOfflineMessage = BindLocal(config, "14 - Discord Notify", "DiscordServerOfflineMessage", "🔴 **{world}** server is offline", "Message posted on shutdown. {world} is replaced with the world name.");
+            DiscordJoinMessage = BindLocal(config, "14 - Discord Notify", "DiscordJoinMessage", "🟢 **{player}** joined **{world}**\n-# {playercount} online · {players}", "Message posted when a player connects. Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
+            DiscordLeaveMessage = BindLocal(config, "14 - Discord Notify", "DiscordLeaveMessage", "🔴 **{player}** left **{world}**\n-# {playercount} online · {players}", "Message posted when a player disconnects ({playercount}/{players} are who is left). Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
+            DiscordServerOnlineMessage = BindLocal(config, "14 - Discord Notify", "DiscordServerOnlineMessage", "🟢 **{world}** is online · started {time}\n-# Wonderland {version}", "Message posted once the world has finished loading. Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
+            DiscordServerOfflineMessage = BindLocal(config, "14 - Discord Notify", "DiscordServerOfflineMessage", "🔴 **{world}** is offline · {time}", "Message posted on shutdown. Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
 
             VitalsGuardEnabled = BindSynced(config, configSync, "12 - Security", "VitalsGuardEnabled", true, "Flag max HP above a configured ceiling and implausible current stamina. Detect-only: neither can be corrected from the server - the owning client rewrites both every second and discards stale server writes while moving.");
             VitalsGuardInterval = BindSynced(config, configSync, "12 - Security", "VitalsGuardInterval", 5f, "Seconds between vitals checks.", 1f, 60f);
@@ -261,17 +269,64 @@ namespace Wonderland.Core
             ItemIntegritySweepBatchSize = BindSyncedInt(config, configSync, "12 - Security", "ItemIntegritySweepBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
             ItemIntegritySweepCorrect = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepCorrect", false, "If true, remove implausible items outright instead of only logging them.");
 
-            DiscordLifecycleInterval = BindLocal(config, "14 - Discord Notify", "DiscordLifecycleInterval", 3f, "Seconds between the sweep that detects player deaths and first-time joins.");
+            DiscordLifecycleInterval = BindLocal(config, "14 - Discord Notify", "DiscordLifecycleInterval", 3f, "Seconds between the sweep that detects player deaths.");
             DiscordNotifyDeaths = BindLocal(config, "14 - Discord Notify", "DiscordNotifyDeaths", true, "Post in Discord whenever a connected player dies.");
-            DiscordDeathMessage = BindLocal(config, "14 - Discord Notify", "DiscordDeathMessage", "\U0001F480 **{player}** died", "Message posted when a player dies. {player} is replaced with their name.");
-            DiscordNotifyFirstJoin = BindLocal(config, "14 - Discord Notify", "DiscordNotifyFirstJoin", true, "Post a welcome message in Discord the first time a new character ever joins this world. Works even if Starter Grant (section 10) is turned off - this is tracked separately.");
-            DiscordFirstJoinMessage = BindLocal(config, "14 - Discord Notify", "DiscordFirstJoinMessage", "\U0001F389 **{player}** joined {world} for the first time - welcome!", "Message posted the first time a character joins. {player} and {world} are replaced.");
+            DiscordDeathMessage = BindLocal(config, "14 - Discord Notify", "DiscordDeathMessage", "💀 **{player}** died\n-# {playercount} online", "Message posted when a player dies. Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
+            DiscordNotifyFirstJoin = BindLocal(config, "14 - Discord Notify", "DiscordNotifyFirstJoin", true, "Post a welcome message in Discord the first time a new ACCOUNT (Steam / PlayStation / Xbox ID) ever joins this world. Decided from Valheim's own persisted player history in the world file, so anyone already in that history (everyone who has logged in since the Valheim 1.0 world format) is never welcomed as new, and a veteran rolling a new alt character isn't either. Independent of Starter Grant (section 10).");
+            DiscordFirstJoinMessage = BindLocal(config, "14 - Discord Notify", "DiscordFirstJoinMessage", "🎉 Welcome **{player}** to **{world}** — first time here! {mention}\n-# Say hi 👋", "Message posted the first time an account joins (see DiscordNotifyFirstJoin); {player} is the character name they logged in with. Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
             DiscordNotifyBossDefeats = BindLocal(config, "14 - Discord Notify", "DiscordNotifyBossDefeats", true, "Post in Discord when one of the five classic bosses (Eikthyr, The Elder, Bonemass, Moder, Yagluth) is defeated for the first time. Only fires once per boss per world - restarting the server won't re-post it.");
-            DiscordNotifyHeartbeat = BindLocal(config, "14 - Discord Notify", "DiscordNotifyHeartbeat", false, "Post a periodic 'server is alive' status update in Discord, showing uptime and who's currently online - handy for a community to check who's playing without opening the game. Uses the same timer as the log-only heartbeat in section 1 (HeartbeatIntervalMinutes). Off by default since posting to a channel every 15 minutes adds up over a day - turn on if your community wants it, and raise the interval in section 1 if once every 15 minutes is too chatty for your channel.");
-            DiscordHeartbeatMessage = BindLocal(config, "14 - Discord Notify", "DiscordHeartbeatMessage", "\U0001F49A **{world}** heartbeat - up {uptime} | {playercount} player(s) online: {players}", "Message posted for the Discord heartbeat above. Placeholders: {world}, {uptime}, {playercount} (a number), {players} (comma-separated names, or 'none' if nobody's online).");
-            DiscordBossDefeatMessage = BindLocal(config, "14 - Discord Notify", "DiscordBossDefeatMessage", "⚔️ **{boss}** has been defeated on {world}!", "Message posted when a boss is defeated. {boss} and {world} are replaced.");
+            DiscordNotifyHeartbeat = BindLocal(config, "14 - Discord Notify", "DiscordNotifyHeartbeat", false, "Post a periodic 'server is alive' status update in Discord, showing uptime and who's currently online - handy for a community to check who's playing without opening the game. Shares HeartbeatIntervalMinutes (section 1) with the log heartbeat unless DiscordHeartbeatIntervalMinutes below is set. Off by default since posting to a channel every 15 minutes adds up over a day - turn on if your community wants it, and set DiscordHeartbeatIntervalMinutes (e.g. 60) if that is too chatty for your channel.");
+            DiscordHeartbeatMessage = BindLocal(config, "14 - Discord Notify", "DiscordHeartbeatMessage", "💚 **{world}** · up **{uptime}** · **{playercount}** online\n-# {players}", "Message posted for the Discord heartbeat above. Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
+            DiscordHeartbeatIntervalMinutes = config.Bind("14 - Discord Notify", "DiscordHeartbeatIntervalMinutes", 0f, new ConfigDescription("Minutes between Discord heartbeat posts. 0 (the default) shares HeartbeatIntervalMinutes from section 1 with the log heartbeat; any other value gives the Discord post its own timer - e.g. 60 for an hourly roster while the log keeps its 15-minute pulse. Anything between 0 and 1 is treated as 1 minute - Discord rate-limits webhooks.", new AcceptableValueRange<float>(0f, 1440f)));
+            DiscordTemplateStyle = BindLocal(config, "14 - Discord Notify", "DiscordTemplateStyle", 0, "Internal: which message-template style this file has already been migrated to (1 = the 0.8.0 two-line style). Leave it alone - it only exists so a template you deliberately set back to the old wording is not migrated again on the next start.");
+            DiscordAvatarUrl = BindLocal(config, "14 - Discord Notify", "DiscordAvatarUrl", "", "Image URL to post with as the avatar. Empty (the default) uses the webhook's own avatar as set up in Discord. Any public https image works - e.g. upload wonderland.png anywhere in your Discord, right-click it -> Copy Link.");
+            DiscordMention = BindLocal(config, "14 - Discord Notify", "DiscordMention", "", "What the {mention} placeholder turns into - a role like <@&123456789012345678>, a user like <@123456789012345678>, or @everyone / @here. Empty (the default) means {mention} is removed and nothing is ever pinged; player names in messages can never ping either way. To get an id: Discord Settings -> Advanced -> Developer Mode, then right-click the role/user -> Copy ID. A role must have 'Allow anyone to @mention this role' on for a webhook ping to work. Used by the boss-defeat and first-join templates by default.");
+            DiscordBossDefeatMessage = BindLocal(config, "14 - Discord Notify", "DiscordBossDefeatMessage", "⚔️ **{boss}** has fallen on **{world}**! {mention}\n-# {playercount} online: {players}", "Message posted when a boss is defeated. Placeholders (any template can use any of them): {player} {boss} {world} {uptime} {playercount} {players} {time} {version} {mention}. {time} is a live Discord timestamp ('5 minutes ago', shown in each reader's own timezone); {mention} is DiscordMention below (blank = simply removed). Discord markdown works: **bold**, *italic*, `code`; write \\n for a new line and start a line with -# for Discord's small grey subtext.");
+
+            BarrkBotExportEnabled = BindLocal(config, "17 - BarrkBOT Export", "BarrkBotExportEnabled", true, "Write BepInEx/config/Wonderland/barrkbot_wonderland.json for BarrkBOT (the community Discord bot that answers questions from files mods write on this box): who is online, per-player sessions / connected time / deaths, world progress (bosses), the world rates in force, and lifetime automation counters - all measured by the server itself. Harmless with no BarrkBOT installed; it is just a small JSON file. Off removes the file and pauses tracking (what was recorded stays in Wonderland.BarrkBot.<world>.dat). Local to this server, never synced to clients.");
+            BarrkBotWriteSeconds = BindLocal(config, "17 - BarrkBOT Export", "BarrkBotWriteSeconds", 60f, "Seconds between rewrites of the export file (minimum 10). BarrkBOT sweeps every minute and calls a file stale after 60 minutes, so 60 is plenty.");
 
             MigrateLegacyConfig(config);
+            MigrateDiscordTemplates(config);
+        }
+
+        /// <summary>
+        /// 0.8.0 restyled every Discord message template (two lines, subtext, live timestamps). BepInEx keeps
+        /// whatever value is already in the .cfg on Bind, so a server updated in place would keep posting the
+        /// 0.7.2 look forever. An entry still holding its exact pre-0.8.0 default is therefore moved to the new
+        /// default here; anything an admin has edited differs from that string and is left exactly as it is.
+        /// </summary>
+        private static void MigrateDiscordTemplates(ConfigFile config)
+        {
+            if (DiscordTemplateStyle == null || DiscordTemplateStyle.Value >= 1)
+            {
+                return; // one-shot: an admin who sets a template back to the old wording keeps it
+            }
+            int moved = 0;
+            moved += MoveOffOldDefault(DiscordJoinMessage, "🟢 **{player}** joined the server");
+            moved += MoveOffOldDefault(DiscordLeaveMessage, "🔴 **{player}** left the server");
+            moved += MoveOffOldDefault(DiscordServerOnlineMessage, "🟢 **{world}** server is online");
+            moved += MoveOffOldDefault(DiscordServerOfflineMessage, "🔴 **{world}** server is offline");
+            moved += MoveOffOldDefault(DiscordDeathMessage, "\U0001F480 **{player}** died");
+            moved += MoveOffOldDefault(DiscordFirstJoinMessage, "\U0001F389 **{player}** joined {world} for the first time - welcome!");
+            moved += MoveOffOldDefault(DiscordBossDefeatMessage, "⚔️ **{boss}** has been defeated on {world}!");
+            moved += MoveOffOldDefault(DiscordHeartbeatMessage, "\U0001F49A **{world}** heartbeat - up {uptime} | {playercount} player(s) online: {players}");
+            if (moved > 0)
+            {
+                WonderlandDebug.LogAlways($"[Config] {moved} Discord message template(s) were still on the pre-0.8.0 default and have been moved to the 0.8.0 style - edit them in section 14 if you preferred the old wording.");
+            }
+            DiscordTemplateStyle.Value = 1;
+            config.Save();
+        }
+
+        private static int MoveOffOldDefault(ConfigEntry<string>? entry, string previousDefault)
+        {
+            if (entry == null || entry.Value != previousDefault)
+            {
+                return 0;
+            }
+            entry.Value = (string)entry.DefaultValue;
+            return 1;
         }
 
         // ------------------------------------------------------------------

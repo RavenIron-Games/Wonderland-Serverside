@@ -1,9 +1,10 @@
 {
     "name": "Wonderland",
-    "version_number": "0.7.2",
+    "version_number": "0.8.0",
     "website_url": "https://ravenirongames.com/",
-    "description": "Strictly server-side Valheim 1.0 mod: automation, world governance, and status effects - vacuum, production supply, container growth, carry/stamina rates, raid/spawn control, and more. Zero client install, full PlayFab/Xbox/crossplay. See README.",
+    "description": "Strictly server-side Valheim 1.0 mod: automation, world governance, status effects, Discord notify, BarrkBOT export - vacuum, production supply, container rows, carry/stamina rates, raid/spawn control. Zero client install, full crossplay. See README.",
     "dependencies": [
-        "denikson-BepInExPack_Valheim-5.4.2350"
+        "denikson-BepInExPack_Valheim-5.4.2350",
+        "ValheimModding-JsonDotNET-13.0.4"
     ]
 }

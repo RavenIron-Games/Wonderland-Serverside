@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 using BepInEx.Configuration;
 using HarmonyLib;
 using ServerSync;
@@ -10,20 +14,120 @@ namespace Wonderland.Subsystems.DiscordNotify
         public string Name => "DiscordNotify";
         public bool IsEnabled => true;
 
+        // Global keys the pre-0.8.0 first-join detector wrote into the world; removed once on load now
+        // that first join is decided from vanilla's own ZNet.World.m_playerHistory instead.
+        private const string LegacySeenKeyPrefix = "wonderland_discord_seen_";
+
         public void Initialize(ConfigFile config, ConfigSync configSync, Harmony harmony)
         {
             SubsystemRegistry.SafePatch(harmony, typeof(PeerJoinLeaveHook));
             SubsystemRegistry.SafePatch(harmony, typeof(BossDefeatWatch));
+            SubsystemRegistry.SafePatch(harmony, typeof(WorldLoadedHook));
         }
 
+        /// <summary>ZNetScene.Awake - the save has NOT been read yet at this point (ZNet.Start runs
+        /// ServerLoadWorld later), so nothing that depends on world state belongs here; see OnWorldLoaded.</summary>
         public void OnWorldReady()
         {
-            BossDefeatWatch.SnapshotExistingBossKeys();
+        }
 
-            if (WonderlandConfig.DiscordNotifyServerStatus?.Value == true)
+        /// <summary>ZNet.ServerLoadWorld postfix (WorldLoadedHook): every persisted global key and the
+        /// player history are in memory now, so this is where boot-time state is sampled and where the
+        /// "world finished loading" message the config promises is actually sent.</summary>
+        public static void OnWorldLoaded()
+        {
+            BossDefeatWatch.SnapshotExistingBossKeys();
+            RemoveLegacySeenKeys();
+            LogSetupSummary();
+
+            if (ZNet.m_loadError)
             {
-                DiscordWebhook.Send(FormatServerMessage(WonderlandConfig.DiscordServerOnlineMessage?.Value));
+                WonderlandDebug.LogWarning("[DiscordNotify] world load reported an error - skipping the server-online post.");
+                return;
             }
+
+            if (WonderlandConfig.DiscordNotifyServerStatus?.Value == true && ZoneSystem.instance != null)
+            {
+                // ZoneSystem.GenerateLocationsCompleted's add-accessor invokes the handler immediately when
+                // locations already exist (every existing world) and otherwise queues it until the
+                // time-sliced generation coroutine finishes (a brand-new world) - the same event vanilla's
+                // own ServerLoadWorld uses to decide when to OpenServer, subscribed just before this one.
+                ZoneSystem.instance.GenerateLocationsCompleted += SendServerOnline;
+            }
+        }
+
+        private static void SendServerOnline()
+        {
+            if (ZoneSystem.instance != null)
+            {
+                ZoneSystem.instance.GenerateLocationsCompleted -= SendServerOnline;
+            }
+            DiscordWebhook.Send(Fill(WonderlandConfig.DiscordServerOnlineMessage?.Value));
+        }
+
+        private static void RemoveLegacySeenKeys()
+        {
+            try
+            {
+                if (ZoneSystem.instance == null)
+                {
+                    return;
+                }
+
+                int removed = 0;
+                foreach (string key in ZoneSystem.instance.GetGlobalKeys())
+                {
+                    if (key.StartsWith(LegacySeenKeyPrefix, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        ZoneSystem.instance.RemoveGlobalKey(key);
+                        removed++;
+                    }
+                }
+
+                if (removed > 0)
+                {
+                    WonderlandDebug.LogAlways($"[DiscordNotify] removed {removed} stale '{LegacySeenKeyPrefix}*' global key(s) left by the old first-join tracker.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                WonderlandDebug.LogWarning($"[DiscordNotify] legacy seen-key cleanup failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>One line so the log itself answers "why is nothing / only some of it reaching Discord".</summary>
+        private static void LogSetupSummary()
+        {
+            bool enabled = WonderlandConfig.DiscordNotifyEnabled?.Value == true;
+            bool hasUrl = !string.IsNullOrWhiteSpace(WonderlandConfig.DiscordWebhookUrl?.Value);
+            string webhook = !hasUrl
+                ? "NOT SET - nothing will be posted until DiscordWebhookUrl is filled in" + (enabled ? "" : " (and DiscordNotifyEnabled is also false)")
+                : (enabled ? "yes" : "set but DiscordNotifyEnabled = false");
+
+            WonderlandDebug.LogAlways(
+                $"[DiscordNotify] webhook configured: {webhook}"
+                + $" | server status: {OnOff(WonderlandConfig.DiscordNotifyServerStatus, "DiscordNotifyServerStatus")}"
+                + $" | logins: {OnOff(WonderlandConfig.DiscordNotifyLogins, "DiscordNotifyLogins")}"
+                + $" | deaths: {OnOff(WonderlandConfig.DiscordNotifyDeaths, "DiscordNotifyDeaths")}"
+                + $" | first join: {OnOff(WonderlandConfig.DiscordNotifyFirstJoin, "DiscordNotifyFirstJoin")}"
+                + $" | boss defeats: {OnOff(WonderlandConfig.DiscordNotifyBossDefeats, "DiscordNotifyBossDefeats")}"
+                + $" | heartbeat: {OnOff(WonderlandConfig.DiscordNotifyHeartbeat, "DiscordNotifyHeartbeat")}"
+                + $" | interval: {DescribeHeartbeatInterval()}"
+                + $" | avatar: {(string.IsNullOrWhiteSpace(WonderlandConfig.DiscordAvatarUrl?.Value) ? "webhook default" : "custom")}"
+                + $" | mention: {(string.IsNullOrWhiteSpace(WonderlandConfig.DiscordMention?.Value) ? "none" : WonderlandConfig.DiscordMention!.Value.Trim())}");
+        }
+
+        private static string DescribeHeartbeatInterval()
+        {
+            float discordMinutes = WonderlandConfig.DiscordHeartbeatIntervalMinutes?.Value ?? 0f;
+            return discordMinutes > 0f
+                ? $"{discordMinutes:0.#} min (DiscordHeartbeatIntervalMinutes)"
+                : $"{WonderlandConfig.HeartbeatIntervalMinutes?.Value ?? 15f:0.#} min (HeartbeatIntervalMinutes, shared with the log heartbeat)";
+        }
+
+        private static string OnOff(ConfigEntry<bool>? entry, string settingName)
+        {
+            return entry?.Value == true ? "on" : $"off ({settingName})";
         }
 
         public void OnUpdate()
@@ -37,7 +141,7 @@ namespace Wonderland.Subsystems.DiscordNotify
         {
             if (WonderlandConfig.DiscordNotifyServerStatus?.Value == true)
             {
-                DiscordWebhook.SendBlocking(FormatServerMessage(WonderlandConfig.DiscordServerOfflineMessage?.Value));
+                DiscordWebhook.SendBlocking(Fill(WonderlandConfig.DiscordServerOfflineMessage?.Value));
             }
         }
 
@@ -46,16 +150,18 @@ namespace Wonderland.Subsystems.DiscordNotify
             WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' connected.");
             if (WonderlandConfig.DiscordNotifyLogins?.Value == true)
             {
-                DiscordWebhook.Send(FormatPlayerMessage(WonderlandConfig.DiscordJoinMessage?.Value, playerName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordJoinMessage?.Value, player: playerName));
             }
         }
 
-        public static void AnnounceLeave(string playerName)
+        /// <summary>The leaving peer is still in ZNet's peer list when ZNet.Disconnect's prefix runs, so
+        /// it is excluded from the roster explicitly - "{playercount} online" means after they've gone.</summary>
+        public static void AnnounceLeave(string playerName, ZNetPeer leavingPeer)
         {
             WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' disconnected.");
             if (WonderlandConfig.DiscordNotifyLogins?.Value == true)
             {
-                DiscordWebhook.Send(FormatPlayerMessage(WonderlandConfig.DiscordLeaveMessage?.Value, playerName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordLeaveMessage?.Value, player: playerName, excludePeer: leavingPeer));
             }
         }
 
@@ -66,7 +172,7 @@ namespace Wonderland.Subsystems.DiscordNotify
             WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' died.");
             if (WonderlandConfig.DiscordNotifyDeaths?.Value == true)
             {
-                DiscordWebhook.Send(FormatPlayerWorldMessage(WonderlandConfig.DiscordDeathMessage?.Value, "{player}", playerName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordDeathMessage?.Value, player: playerName));
             }
         }
 
@@ -75,7 +181,7 @@ namespace Wonderland.Subsystems.DiscordNotify
             WonderlandDebug.LogAlways($"[DiscordNotify] '{playerName}' joined this world for the first time.");
             if (WonderlandConfig.DiscordNotifyFirstJoin?.Value == true)
             {
-                DiscordWebhook.Send(FormatPlayerWorldMessage(WonderlandConfig.DiscordFirstJoinMessage?.Value, "{player}", playerName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordFirstJoinMessage?.Value, player: playerName));
             }
         }
 
@@ -84,12 +190,13 @@ namespace Wonderland.Subsystems.DiscordNotify
             WonderlandDebug.LogAlways($"[DiscordNotify] boss defeated: {bossName}.");
             if (WonderlandConfig.DiscordNotifyBossDefeats?.Value == true)
             {
-                DiscordWebhook.Send(FormatPlayerWorldMessage(WonderlandConfig.DiscordBossDefeatMessage?.Value, "{boss}", bossName));
+                DiscordWebhook.Send(Fill(WonderlandConfig.DiscordBossDefeatMessage?.Value, boss: bossName));
             }
         }
 
-        /// <summary>Called from Heartbeat on its own interval (section 1's HeartbeatIntervalMinutes) - this
-        /// does not run its own timer, so there is nothing here to gate against spam beyond the toggle.</summary>
+        /// <summary>Called from Heartbeat on its timer (HeartbeatIntervalMinutes, or DiscordHeartbeatIntervalMinutes
+        /// when that is set) - this does not run its own timer, so there is nothing here to gate against spam
+        /// beyond the toggle. The roster is the one Heartbeat already computed for its log line, so the two agree.</summary>
         public static void AnnounceHeartbeat(string uptime, int playerCount, string playerNames)
         {
             if (WonderlandConfig.DiscordNotifyHeartbeat?.Value != true)
@@ -97,32 +204,80 @@ namespace Wonderland.Subsystems.DiscordNotify
                 return;
             }
 
-            string template = WonderlandConfig.DiscordHeartbeatMessage?.Value ?? "";
-            string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "";
-            string message = template
-                .Replace("{world}", worldName)
-                .Replace("{uptime}", uptime)
-                .Replace("{playercount}", playerCount.ToString())
-                .Replace("{players}", playerCount > 0 ? playerNames : "none");
-            DiscordWebhook.Send(message);
+            DiscordWebhook.Send(Fill(WonderlandConfig.DiscordHeartbeatMessage?.Value, uptime: uptime, playerCount: playerCount, players: playerNames));
         }
 
-        private static string FormatPlayerMessage(string template, string playerName)
+        /// <summary>
+        /// Fills every placeholder any template may use - {player} {boss} {world} {uptime} {playercount}
+        /// {players} {time} {version} {mention} - so an admin can put any of them in any message. {time} is a
+        /// Discord timestamp markup (&lt;t:unix:R&gt;), which the client renders as a live "5 minutes ago"
+        /// in the reader's own timezone. The roster comes from ZNet's peer list rather than
+        /// ConnectedCharacters because a join is announced from RPC_PeerInfo, before the joining player's
+        /// character ZDO exists - the peer is already ready and named at that point, so "{playercount}
+        /// online" includes them. Lines are right-trimmed so an empty {mention} leaves no dangling space.
+        /// Substitution is a single pass over the template, so a value is never re-scanned - a character
+        /// named "{mention}" or "{world}" stays literal text - and every player-supplied string has a
+        /// zero-width space inserted after each '@' before insertion, which turns "@everyone", "@here"
+        /// and "&lt;@&amp;id&gt;" into plain text Discord will not parse as a mention. ZNet.RPC_PeerInfo stores
+        /// m_playerName verbatim from the client, so names are untrusted input here.
+        /// </summary>
+        private static string Fill(string? template, string? player = null, string? boss = null, string? uptime = null,
+            ZNetPeer? excludePeer = null, int? playerCount = null, string? players = null)
         {
-            return (template ?? "").Replace("{player}", playerName);
+            if (string.IsNullOrEmpty(template))
+            {
+                return "";
+            }
+
+            if (playerCount == null || players == null)
+            {
+                (int count, string names) = OnlineRoster(excludePeer);
+                playerCount ??= count;
+                players ??= names;
+            }
+
+            string world = ZNet.instance != null ? ZNet.instance.GetWorldName() : "";
+            var values = new Dictionary<string, string>
+            {
+                ["player"] = Neutralize(player),
+                ["boss"] = boss ?? "",
+                ["world"] = Neutralize(world),
+                ["uptime"] = uptime ?? "",
+                ["playercount"] = playerCount.Value.ToString(),
+                ["players"] = playerCount.Value > 0 && !string.IsNullOrEmpty(players) ? Neutralize(players) : "none",
+                ["time"] = $"<t:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>",
+                ["version"] = WonderlandPlugin.ModVersion,
+                ["mention"] = WonderlandConfig.DiscordMention?.Value?.Trim() ?? "",
+            };
+            string filled = PlaceholderPattern.Replace(template!, m => values[m.Groups[1].Value]);
+
+            return string.Join("\n", filled.Split('\n').Select(line => line.TrimEnd()));
         }
 
-        private static string FormatServerMessage(string template)
+        private static readonly Regex PlaceholderPattern =
+            new Regex(@"\{(player|boss|world|uptime|playercount|players|time|version|mention)\}", RegexOptions.Compiled);
+
+        /// <summary>Untrusted text can never ping: "@" becomes "@" + U+200B, which Discord renders as-is
+        /// and does not parse as @everyone / @here / &lt;@id&gt;.</summary>
+        private static string Neutralize(string? value)
         {
-            string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "";
-            return (template ?? "").Replace("{world}", worldName);
+            return string.IsNullOrEmpty(value) ? "" : value!.Replace("@", "@\u200B");
         }
 
-        /// <summary>Fills {world} plus one caller-supplied placeholder ({player} or {boss}).</summary>
-        private static string FormatPlayerWorldMessage(string template, string placeholder, string value)
+        private static (int count, string names) OnlineRoster(ZNetPeer? excludePeer)
         {
-            string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "";
-            return (template ?? "").Replace(placeholder, value).Replace("{world}", worldName);
+            var names = new List<string>();
+            if (ZNet.instance != null)
+            {
+                foreach (ZNetPeer peer in ZNet.instance.GetPeers())
+                {
+                    if (peer != null && peer != excludePeer && peer.IsReady() && !string.IsNullOrEmpty(peer.m_playerName))
+                    {
+                        names.Add(peer.m_playerName);
+                    }
+                }
+            }
+            return (names.Count, string.Join(", ", names));
         }
     }
 }

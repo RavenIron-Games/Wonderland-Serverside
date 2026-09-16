@@ -4,7 +4,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>Wonderland</AssemblyName>
     <RootNamespace>Wonderland</RootNamespace>
-    <Version>0.7.2</Version>
+    <Version>0.8.0</Version>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <!-- Every warning here is CS8600/2/3/4/18/25 - nullable-reference-type static analysis flagging
@@ -29,41 +29,53 @@
   <ItemGroup>
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
     <Reference Include="0Harmony">
-      <HintPath>..\libs-Tools\0Harmony.dll</HintPath>
+      <HintPath>..\..\libs-Tools\0Harmony.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="BepInEx">
-      <HintPath>..\libs-Tools\BepInEx.dll</HintPath>
+      <HintPath>..\..\libs-Tools\BepInEx.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_valheim">
-      <HintPath>..\libs-Tools\1.0\server\assembly_valheim.dll</HintPath>
+      <HintPath>..\..\libs-Tools\1.0\server\assembly_valheim.dll</HintPath>
       <Publicize>true</Publicize>
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_utils">
-      <HintPath>..\libs-Tools\1.0\server\assembly_utils.dll</HintPath>
+      <HintPath>..\..\libs-Tools\1.0\server\assembly_utils.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine">
-      <HintPath>..\libs-Tools\1.0\server\UnityEngine.dll</HintPath>
+      <HintPath>..\..\libs-Tools\1.0\server\UnityEngine.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\libs-Tools\1.0\server\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>..\..\libs-Tools\1.0\server\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <!-- ServerSync.cs's client-side config-mismatch popup touches TMP_Text/MaskableGraphic directly. -->
     <Reference Include="Unity.TextMeshPro">
-      <HintPath>..\libs-Tools\1.0\server\Unity.TextMeshPro.dll</HintPath>
+      <HintPath>..\..\libs-Tools\1.0\server\Unity.TextMeshPro.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>..\libs-Tools\1.0\server\UnityEngine.UI.dll</HintPath>
+      <HintPath>..\..\libs-Tools\1.0\server\UnityEngine.UI.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Splatform">
-      <HintPath>..\libs-Tools\1.0\server\Splatform.dll</HintPath>
+      <HintPath>..\..\libs-Tools\1.0\server\Splatform.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!--
+      BarrkBOT export serialization (Subsystems/BarrkBot). Private=False like every reference above - not
+      bundled. Valheim 1.0 ships Newtonsoft.Json 13.0.2 in valheim_server_Data/Managed (new in 1.0, see
+      libs-Tools/REFERENCE-DLL-PROVENANCE.md) and the ValheimModding-JsonDotNET Thunderstore package that
+      HexiumDist/manifest.json declares as a dependency installs 13.0.3; both carry AssemblyVersion
+      13.0.0.0, so this reference binds to whichever is present. TortalPortal Lite (same folder, same box)
+      already runs against it this way.
+    -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\..\libs-Tools\Newtonsoft.Json.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <!-- Plain .NET Framework BCL assembly, not a game DLL - resolved from the installed net472

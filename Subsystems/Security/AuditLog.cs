@@ -12,10 +12,14 @@ namespace Wonderland.Subsystems.Security
     /// </summary>
     public static class AuditLog
     {
-        public static void Flag(string category, string who, string detail)
+        /// <param name="playerId">The character's stable id (ConnectedCharacter.PlayerId) when the flag is
+        /// about a player; 0 when it is about a place or unresolved. Names are not unique, so the per-player
+        /// tally in the BarrkBOT registry is keyed on this alone.</param>
+        public static void Flag(string category, string who, string detail, long playerId = 0L)
         {
             string identity = string.IsNullOrEmpty(who) ? "Unknown" : who;
             WonderlandDebug.LogAlways($"[SECURITY:{category}] {identity} - {detail}");
+            BarrkBot.BarrkBotStats.OnSecurityFlag(who, playerId);
         }
     }
 }

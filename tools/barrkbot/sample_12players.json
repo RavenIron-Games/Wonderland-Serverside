@@ -1,0 +1,180 @@
+{
+  "schema_version": 3,
+  "generated_at": "2026-09-15T20:05:00Z",
+  "source": "Wonderland 0.8.0",
+  "intervals": {
+    "write_seconds": 60
+  },
+  "session_started_at": "2026-09-15T14:00:00Z",
+  "tracking_since": "2026-09-15T15:00:00Z",
+  "export_notes": "All figures are measured by the server itself, never reported by a client. server is live and resets on restart (session_started_at); players and lifetime are cumulative since tracking_since. An empty players map means nothing recorded yet, not nobody.",
+  "server": {
+    "name": "Wubarrks Vanilla Bean",
+    "world_name": "VanillaBean01",
+    "online": true,
+    "world_day": 187,
+    "known_accounts": 17,
+    "uptime_seconds": 21900,
+    "players_online": 2,
+    "players_online_names": [
+      "ColdMonkey",
+      "Rohan"
+    ],
+    "peak_players_online": 5,
+    "wonderland_version": "0.8.0",
+    "carry_weight_multiplier": 2.0,
+    "stamina_regen_multiplier": 3.0,
+    "bosses_defeated": [
+      "Eikthyr"
+    ],
+    "bosses_remaining": [
+      "The Elder",
+      "Bonemass",
+      "Moder",
+      "Yagluth"
+    ],
+    "bosses_defeated_at": {},
+    "stations_switched_off": 4
+  },
+  "server_notes": "online false means the server was stopped cleanly and players_online is then 0 by definition. players_online is who is connected right now. known_accounts is how many distinct accounts have ever joined this world (the game's own history). bosses_defeated / bosses_remaining cover the five classic bosses and are the world's own progress, not one player's kills; bosses_defeated_at only has dates for defeats seen since Wonderland 0.8.0.",
+  "players": {
+    "0000000000000007": {
+      "name": "Asfa Wu",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 8,
+      "connected_seconds_alltime": 28800,
+      "deaths_alltime": 3
+    },
+    "0000000000000006": {
+      "name": "baconparticles",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 7,
+      "connected_seconds_alltime": 25200,
+      "deaths_alltime": 2
+    },
+    "0000000000000002": {
+      "name": "CalmyCat",
+      "online_now": true,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 3,
+      "connected_seconds_alltime": 10800,
+      "deaths_alltime": 2
+    },
+    "0000000000000001": {
+      "name": "Cpt JD",
+      "online_now": true,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 2,
+      "connected_seconds_alltime": 7200,
+      "deaths_alltime": 1
+    },
+    "-2614115181": {
+      "name": "dobbs831",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 11,
+      "connected_seconds_alltime": 39600,
+      "deaths_alltime": 2
+    },
+    "0000000000000008": {
+      "name": "Jacket11",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 9,
+      "connected_seconds_alltime": 32400,
+      "deaths_alltime": 0
+    },
+    "0000000000000009": {
+      "name": "joelance1988",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 10,
+      "connected_seconds_alltime": 36000,
+      "deaths_alltime": 1
+    },
+    "-1833530446": {
+      "name": "Karmatronic",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 12,
+      "connected_seconds_alltime": 43200,
+      "deaths_alltime": 3
+    },
+    "0000000000000005": {
+      "name": "Revezunds",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 6,
+      "connected_seconds_alltime": 21600,
+      "deaths_alltime": 1
+    },
+    "0000000000000004": {
+      "name": "rosa98",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 5,
+      "connected_seconds_alltime": 18000,
+      "deaths_alltime": 0
+    },
+    "0000000000000003": {
+      "name": "SuperKamiGuru",
+      "online_now": false,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 4,
+      "connected_seconds_alltime": 14400,
+      "deaths_alltime": 3
+    },
+    "0000000000000000": {
+      "name": "The Rohan",
+      "online_now": true,
+      "first_seen_at": "2026-09-15T15:00:00Z",
+      "last_seen_at": "2026-09-15T20:04:55Z",
+      "sessions_alltime": 1,
+      "connected_seconds_alltime": 3600,
+      "deaths_alltime": 0
+    }
+  },
+  "players_notes": "connected_seconds_alltime is server-measured connection time, not the character's playtime - never compare it with another mod's playtime. sessions_alltime counts connections, not logins per day. deaths_alltime is deaths the server saw. welcomed_at only exists for accounts first seen after 0.8.0.",
+  "players_not_achievements": [
+    "deaths_alltime",
+    "sessions_alltime"
+  ],
+  "lifetime": {
+    "production_supply_items_fed_alltime": 11645,
+    "production_supply_items_fed_by_item": {
+      "coal": 2421,
+      "copperore": 391,
+      "ironscrap": 302,
+      "resin": 1659,
+      "tinore": 411,
+      "wood": 6422
+    },
+    "vacuum_items_moved_alltime": 3444,
+    "vacuum_items_moved_by_item": {
+      "coal": 2315,
+      "copper": 241,
+      "iron": 94,
+      "tin": 221
+    },
+    "item_cache_items_stored_alltime": 0,
+    "item_cache_items_returned_alltime": 0,
+    "starter_kit_items_granted_alltime": 40,
+    "raids_blocked_alltime": 3,
+    "spawns_culled_alltime": 57,
+    "security_flags_total_alltime": 1
+  },
+  "lifetime_notes": "Items moved by Wonderland's automation (fed to stations, vacuumed into chests, cached) - never a player's own actions; never sum, rank or compare them across mods or against a player. raids_blocked and spawns_culled are world-governor interventions. security_flags_total_alltime is server-side integrity flags - suspicions for the admin, never verdicts, and deliberately not broken down per player."
+}

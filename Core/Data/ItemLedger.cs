@@ -44,6 +44,7 @@ namespace Wonderland.Core.Data
         {
             _totalMoved += amount;
             Append(new Entry(subsystem, itemName, amount, credited: true));
+            Subsystems.BarrkBot.BarrkBotStats.OnTransfer(subsystem, itemName, amount);
             WonderlandDebug.LogInfo($"[ItemLedger] {subsystem} moved {amount}x {itemName}");
         }
 

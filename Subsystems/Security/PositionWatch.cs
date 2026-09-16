@@ -71,7 +71,7 @@ namespace Wonderland.Subsystems.Security
                         {
                             if (!isDead && !justRespawned && !IsLegitimateTransit(character, last.pos, pos))
                             {
-                                AuditLog.Flag("PositionWatch", name, $"moved {speed:F1} m/s over {elapsed:F1}s, exceeds ceiling {speedCeiling} m/s.");
+                                AuditLog.Flag("PositionWatch", name, $"moved {speed:F1} m/s over {elapsed:F1}s, exceeds ceiling {speedCeiling} m/s.", character.PlayerId);
                             }
                         }
                     }
@@ -88,7 +88,7 @@ namespace Wonderland.Subsystems.Security
                     }
                     else if (_hasBeenGrounded.Contains(uid))
                     {
-                        AuditLog.Flag("PositionWatch", name, $"reported Y {pos.y:F1} is {above:F1}m above expected ground height {groundHeight:F1} - possible fly/noclip.");
+                        AuditLog.Flag("PositionWatch", name, $"reported Y {pos.y:F1} is {above:F1}m above expected ground height {groundHeight:F1} - possible fly/noclip.", character.PlayerId);
                     }
 
                     // Nothing is flagged until the character has been seen on the ground at least once

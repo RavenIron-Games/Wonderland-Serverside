@@ -90,6 +90,7 @@ namespace Wonderland.Subsystems.WorldGovernor
             }
 
             WonderlandDebug.LogInfo($"[SpawnGovernor] destroyed newly-spawned '{prefab.name}' at {zdo.GetPosition()} - blocked nighttime tier in a blocked biome.");
+            BarrkBot.BarrkBotStats.OnSpawnCulled();
             zdo.SetOwner(ZDOMan.GetSessionID());
             ZDOMan.instance.DestroyZDO(zdo);
         }

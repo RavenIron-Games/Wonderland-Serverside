@@ -5,6 +5,7 @@ using HarmonyLib;
 using ServerSync;
 using Wonderland.Core;
 using Wonderland.Core.Compat;
+using Wonderland.Subsystems.BarrkBot;
 using Wonderland.Subsystems.DiscordNotify;
 using Wonderland.Subsystems.ItemFlow;
 using Wonderland.Subsystems.Security;
@@ -19,7 +20,7 @@ namespace Wonderland
     {
         public const string ModGUID = "wubarrk.wonderland";
         public const string ModName = "Wonderland";
-        public const string ModVersion = "0.7.2";
+        public const string ModVersion = "0.8.0";
 
         private const float ConfigPollInterval = 5f;
 
@@ -66,6 +67,7 @@ namespace Wonderland
             Subsystems.Register(new SecuritySubsystem());
             Subsystems.Register(new StatusEffectsSubsystem());
             Subsystems.Register(new DiscordNotifySubsystem());
+            Subsystems.Register(new BarrkBotSubsystem());
         }
 
         private void Update()

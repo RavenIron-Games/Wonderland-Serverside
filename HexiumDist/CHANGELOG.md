@@ -1,5 +1,176 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+- **BarrkBOT export.** `BepInEx/config/Wonderland/barrkbot_wonderland.json`, rewritten every minute (`17 - BarrkBOT
+  Export`) in the shape BarrkBOT 6.0.119 reads: a live server block (world, uptime, who is online and the peak, the
+  world rates in force, the bosses defeated / remaining and the date of each defeat seen since 0.8.0, the server's
+  `-name`), a `players` map keyed by the stable character id (name, online now, first/last seen, sessions,
+  server-measured connected time, deaths, first-visit date), and lifetime automation counters (items fed to
+  stations by item, vacuumed and auto-harvested, cached, starter kits, raids blocked, spawns culled, total
+  security flags). Everything is server-observed - nothing is taken from a client's report - and every caveat
+  ships as `_notes` guidance in the file. Sessions and connected time follow the connection, so dying and
+  respawning is not a new session. A clean shutdown rewrites the file once more saying `online: false` with nobody
+  on, so the bot never reports the last roster as still online; switching the export off at runtime removes the
+  file. Counters persist across restarts in `Wonderland.BarrkBot.<world>.dat` (an unreadable one is moved aside,
+  never overwritten); both files are written temp-then-rename. A player's platform id and per-player security-flag
+  tally are kept in that registry for the admin but deliberately not exported. Serialized with Json.NET (the game
+  ships 13.0.2 in `Managed/`; `ValheimModding-JsonDotNET` is declared as a dependency so mod managers install it
+  too). `BARRKBOT_CONTRACT.md` documents the field names the bot depends on.
+- **Discord: restyled messages.** Most announcements are now two lines of Discord markdown - a bold headline plus a
+  small grey `-#` subtext (the live roster on join/leave/boss/heartbeat, the online count on death, the mod version on
+  server-online; the offline post is one line) - e.g. `🟢 **Rohan** joined **VanillaBean01**` / `-# 3 online · Rohan,
+  Cpt JD, ColdMonkey`, `⚔️ **Eikthyr** has fallen on **VanillaBean01**!`, `💚 **VanillaBean01** · up **2h15m** · **3**
+  online`. Every template can now use every placeholder: `{player}` `{boss}` `{world}` `{uptime}` `{playercount}`
+  `{players}` `{time}` (a live Discord timestamp - "5 minutes ago", in each reader's own timezone) `{version}`
+  `{mention}`. Write `\n` in the .cfg for a new line. **Existing servers are migrated:** a template still on its
+  0.7.2 default is moved to the new style on first load (logged once); anything you had edited is left exactly as it
+  was. All of section 14 hot-reloads like the rest of the config.
+- **Discord: three opt-in extras, all off by default and all through the same webhook.** `DiscordAvatarUrl` (empty =
+  the webhook's own avatar), `DiscordMention` (what `{mention}` turns into - a role, a user, or @everyone/@here; the
+  boss-defeat and first-join templates carry `{mention}` out of the box, and with it blank nothing is ever pinged),
+  and `DiscordHeartbeatIntervalMinutes` (0 = share the log heartbeat's interval; set e.g. 60 for an hourly roster
+  while the log keeps its 15-minute pulse). Mentions are whitelisted per post (`allowed_mentions`) and every
+  player-supplied string is neutralised before insertion, so a character named "@everyone", "<@&role>" or even
+  "{mention}" can never ping anyone through a join, leave, death or roster line.
+
+### Fixed
+- **Production Supply could make a hand-fed ore or fuel vanish ("the smelter ate my silver").** Every auto-feed
+  used to take server ownership of the station ZDO first. While the server owned a smelter, a player standing at
+  it who pressed E had their ore removed from their inventory and the game's own `RPC_AddOre` routed to the
+  owner - the server - which has no live smelter instance and silently dropped it (same for hand-fed coal, and
+  wood/resin into hearths and torches). Worse, the owning client's once-a-second tick could win the revision race
+  and leave the two sides disagreeing about the owner, stalling the station and eating every hand-feed until the
+  next auto-feed visit. The server now never claims a station: a station a nearby player's client is simulating
+  is fed through vanilla's own owner-side `RPC_AddOre` / `RPC_AddFuel` (the write happens on the one machine
+  running it) - and only once that client's own tick stamp on the station proves the instance is live, since a
+  routed RPC to an owner still loading in is discarded unanswered, and only while that player is actually within
+  range of it by their synced position (a stamp alone stays fresh for a second or two after a portal jump);
+  anything unowned, owned by a gone session, or owned by a player who has since gone too far away to be simulating
+  it (vanilla leaves a portalled-away owner holding the station until another player's area covers it) is written
+  directly - and for that far-away owner the updated station is pushed to their client at once, because otherwise
+  their own stale copy would come back with them and wipe everything fed while they were gone. A station whose
+  owner is mid-handover or just released is skipped until the ownership has held still for a few seconds, and one
+  whose nearby owner is not yet simulating it is skipped until they are (that case logs once at verbose). Fuel is only topped up when a
+  whole unit fits (vanilla's own "it's full" threshold) - the old check spent a full coal on a fractional top-up on
+  almost every visit of a burning smelter. Every feed now logs (VerboseLogging) the station, its position, which
+  machine applied it and the before/after, so the next "where did it go" is answerable from the log. What remains:
+  a departure that lands within about a tenth of a second of a visit can still cost that station one unit from
+  the chest - nothing server-side can see a jump before the client reports it.
+- **Discord: every veteran was welcomed as a first-time player.** The first-join detector keyed on a mod-private world
+  key that only started existing in 0.7.2, so each existing player got the "joined for the first time - welcome!" post
+  on their first login after the update (7 of 7 such posts on the live server were accounts with months of history).
+  First join is now decided per **account** from Valheim's own persisted player history in the world file
+  (`ZNet.World.m_playerHistory`, kept since the 1.0 world format) - checked in an `RPC_PeerInfo` prefix, because
+  vanilla appends the account to that list inside the very same handshake. Anyone already in the history is never
+  welcomed as new, and a veteran's new alt character isn't either. The stale `wonderland_discord_seen_*` keys the old
+  tracker wrote are removed once on the next world load (logged when it happens).
+- **Discord: "⚔️ Eikthyr has been defeated" posted on every server restart.** The already-defeated snapshot was taken
+  at `ZNetScene.Awake`, before `ZNet.Start -> ServerLoadWorld -> ZoneSystem.Load` re-adds every saved global key -
+  so the snapshot was always empty and the first re-added boss key was announced on each boot (4 of 4 boots in the
+  live log). The snapshot now runs from a `ZNet.ServerLoadWorld` postfix, after every load path, and the boss watch
+  refuses to announce anything until then.
+- **Discord: "server is online" now really means it.** The post moved from `ZNetScene.Awake` (world not read yet) to
+  after the world has loaded and, on a brand-new world, after location generation finishes - the same
+  `GenerateLocationsCompleted` event vanilla uses to open the server. Skipped with a warning if the world load
+  reported an error.
+- **Discord: the log now says what's configured.** One `[DiscordNotify] webhook configured: ... | heartbeat: off
+  (DiscordNotifyHeartbeat) | interval: 15 min (HeartbeatIntervalMinutes, shared with the log heartbeat) | ...` line at world load, so "why doesn't it post X" is answered by the log
+  itself. (The Discord heartbeat is off by default - it was never a code fault - flip `DiscordNotifyHeartbeat` in
+  section 14 to turn it on.)
+- **Build:** csproj reference paths updated for the project's new location (`..\..\libs-Tools`).
+
+### Reference (the data behind the 0.8.0 entries)
+
+**Files this version reads or writes**
+- `BepInEx/config/Wonderland/barrkbot_wonderland.json` - the BarrkBOT export, rewritten every `BarrkBotWriteSeconds`
+  (default 60, floor 10) via temp-then-rename (`File.Replace`, delete+move fallback). Removed when `BarrkBotExportEnabled`
+  is off (at boot or at runtime). Rewritten once more from `Plugin.OnDestroy` on a clean stop with `server.online = false`,
+  `players_online = 0`, every `online_now = false` - a crash leaves the last periodic file and the reader's 60-minute age
+  caveat is the signal.
+- `BepInEx/config/Wonderland.BarrkBot.<world>.dat` - the persisted registry the export is built from (JSON, schema 1; not a
+  `barrkbot_*` name on purpose so the bot never sees two files). Path pinned at load. An unreadable file is moved to
+  `<file>.corrupt-<yyyyMMddHHmmss>` and a fresh registry started; if even the move fails the session runs in memory and
+  writes nothing. Holds, per character id, what is deliberately **not** exported: `platform_id` (the account id vanilla's
+  player history stores - `Steam_7656…`, `PlayStation_…`, `Xbox_…`) and the per-player `security_flags_count`.
+- `wubarrk.wonderland.cfg` - new keys appended by Bind: section 14 `DiscordTemplateStyle` (internal migration marker,
+  0 → 1), `DiscordAvatarUrl`, `DiscordMention`, `DiscordHeartbeatIntervalMinutes`; section 17 `BarrkBotExportEnabled`
+  (default on), `BarrkBotWriteSeconds` (default 60). Everything in sections 14 and 17 is read at use time - edits to the
+  running file take effect within the 5 s config poll, no restart.
+
+**BarrkBOT export shape** (schema_version 3; the field names below are the interface - see `BARRKBOT_CONTRACT.md` in the repo
+before renaming any)
+- Top level: `schema_version`, `generated_at` (ISO 8601 Z), `source` ("Wonderland x.y.z"), `intervals.write_seconds` (the
+  effective, clamped value), `session_started_at` (process start), `tracking_since` (registry start), `export_notes`,
+  `server`, `server_notes`, `players`, `players_notes`, `players_not_achievements` (`deaths_alltime`, `sessions_alltime`),
+  `lifetime`, `lifetime_notes`.
+- `server`: `name` (the `-name` string, "" if unreadable), `world_name`, `online`, `world_day` (integer or null = not
+  measured), `known_accounts` (vanilla player-history count), `uptime_seconds`, `players_online`, `players_online_names`,
+  `peak_players_online`, `wonderland_version`, `carry_weight_multiplier`, `stamina_regen_multiplier`, `bosses_defeated`,
+  `bosses_remaining` (the five classic bosses), `bosses_defeated_at` (defeats seen since 0.8.0 only), `stations_switched_off`.
+  `players_online`, `online_now` and the peak all come from one set: ids whose connection is up as of the last 5 s sweep.
+- `players` (keyed by the character's `s_playerID` as a decimal string; rows exist from the first sighting of a spawned
+  character): `name`, `online_now`, `first_seen_at`, `last_seen_at`, `sessions_alltime` (one per connection - a death's
+  8-18 s respawn gap is not a session; two live connections on one copied character keep the first binding), `connected_seconds_alltime`
+  (connection time, credited every sweep and for the last partial interval at shutdown), `deaths_alltime`, `welcomed_at`
+  (only for accounts first seen after 0.8.0).
+- `lifetime`: `production_supply_items_fed_alltime`, `production_supply_items_fed_by_item`, `vacuum_items_moved_alltime`
+  (ground pickups + auto-harvest), `vacuum_items_moved_by_item`, `item_cache_items_stored_alltime`,
+  `item_cache_items_returned_alltime`, `starter_kit_items_granted_alltime`, `raids_blocked_alltime`, `spawns_culled_alltime`,
+  `security_flags_total_alltime`.
+- Verified by feeding generated samples through BarrkBOT's real reader (6.1.5 API, `tools/barrkbot/barrkbot-render-probe.mjs`):
+  0 / 3 / 12 players render at 4,148 / 5,720 / 5,654 chars against the reader's 6,000-char reply cap; at 12 players the
+  overview shows one detail row and ranks over all twelve.
+
+**Discord** (section 14)
+- Keys: `DiscordNotifyEnabled`, `DiscordWebhookUrl`, `DiscordUsername`, `DiscordNotifyServerStatus`, `DiscordNotifyLogins`,
+  `DiscordNotifyDeaths`, `DiscordNotifyFirstJoin`, `DiscordNotifyBossDefeats`, `DiscordNotifyHeartbeat` (default **off**),
+  `DiscordLifecycleInterval` (death sweep, 3 s), `DiscordAvatarUrl` (http/https or ignored with one warning),
+  `DiscordMention` (`<@id>`, `<@&id>`, `@everyone`, `@here`; digits-only snowflakes; whitelisted per post through
+  `allowed_mentions`), `DiscordHeartbeatIntervalMinutes` (0 = share the log heartbeat; 0-1440), `DiscordTemplateStyle`.
+- Placeholders every template accepts: `{player}` `{boss}` `{world}` `{uptime}` `{playercount}` `{players}` `{time}`
+  (`<t:…:R>`, a live relative Discord timestamp) `{version}` `{mention}`. `\n` in the .cfg is a new line; a line starting
+  `-#` is Discord subtext. Substitution is single-pass and player-supplied text has every `@` neutralised, so no name can
+  ping. Defaults: join `🟢 **{player}** joined **{world}**\n-# {playercount} online · {players}`, leave `🔴 **{player}** left
+  **{world}**\n-# {playercount} online · {players}`, online `🟢 **{world}** is online · started {time}\n-# Wonderland
+  {version}`, offline `🔴 **{world}** is offline · {time}`, death `💀 **{player}** died\n-# {playercount} online`, first
+  join `🎉 Welcome **{player}** to **{world}** — first time here! {mention}\n-# Say hi 👋`, boss `⚔️ **{boss}** has fallen
+  on **{world}**! {mention}\n-# {playercount} online: {players}`, heartbeat `💚 **{world}** · up **{uptime}** ·
+  **{playercount}** online\n-# {players}`.
+- Migration: on first load a template still equal to its pre-0.8.0 default is moved to the new default, once, then
+  `DiscordTemplateStyle = 1` is written; edited templates are left alone. Log: `[Config] N Discord message template(s) were
+  still on the pre-0.8.0 default and have been moved to the 0.8.0 style - edit them in section 14 if you preferred the old wording.`
+- First join is decided per account from `ZNet.World.m_playerHistory` in an `RPC_PeerInfo` prefix; the
+  `wonderland_discord_seen_*` global keys the old tracker wrote (one per character id it saw) are removed once (logged with the count). Boss snapshot and the online post
+  run after `ZNet.ServerLoadWorld` (and, on a new world, after `GenerateLocationsCompleted`). Boot logs one
+  `[DiscordNotify] webhook configured: … | server status: … | … | heartbeat: … | interval: … | avatar: … | mention: …` line.
+
+**Production Supply delivery** (`ProductionSupplyEngine`)
+- Per visit one of three: **OwnerRpc** - the owning client's own `RPC_AddOre` / `RPC_AddFuel`, used only when that
+  client instantiates the station's zone (its own validated simulation distance around its character's synced position,
+  corner zones excluded unless classic - the same set `ZNetScene.CreateDestroyObjects` uses; a dead/respawning character
+  counts as no instance) **and** its tick stamp (`s_startTime` for smelters, `s_lastTime` for fireplaces, written by the
+  owner every 1 s / 2 s in world time) is younger than 2.5 s / 4.5 s and newer than the current ownership record.
+  **Direct** ZDO write - unowned (at once if never owned this uptime, otherwise once the release has held still for 3 s),
+  owned by this server, owned by a departed session, or owned by a connected player with no instance and a stale stamp; in that last case the station is then force-sent to that
+  player (`ZDOMan.ForceSendZDO`) so the copy they carry is current when they return. **Skip** - an ownership that has not
+  held still for 3 s of world time (checked every engine interval, not only on visits), a fresh stamp with no instance,
+  or a near owner not yet ticking (logs once per episode at verbose: `[ProductionSupply] <id> skipped: owner '…' is N
+  zone(s) away but has not ticked it for … - retrying each cycle.`).
+- Every feed at verbose: `[ProductionSupply] <prefab> <id> @ (x,y,z) <- 1x <item> via rpc sent to owner '…' | server copy
+  …` / `… via direct write | fuel a -> b` / `… via direct write, copy pushed to far owner '…' | …`.
+- Visit cadence is one scanner cycle - roughly 20-45 s per smelter-family station and 2-4 min per fireplace-family station
+  on a lived-in world - which is also the first-feed delay after boot.
+- Known residuals, one unit per station per coincidence: a departure inside the ~50-100 ms character-position sync lag
+  of a visit; a fireplace hand-fed to full inside that same lag (its `RPC_AddFuel` re-checks the cap on the owner's copy);
+  a second client that once owned the station and never received its release.
+
+**Build**
+- Compiled against the Valheim 1.0.12 dedicated-server assemblies (same binary as the live box). Json.NET: the game's own
+  `Managed/Newtonsoft.Json.dll` 13.0.2 (AssemblyVersion 13.0.0.0) satisfies the reference; the declared
+  `ValheimModding-JsonDotNET` package is not required at runtime.
+
 ## 0.7.2
 
 ### Added

@@ -34,6 +34,7 @@ namespace Wonderland.Subsystems.WorldGovernor
             }
 
             WonderlandDebug.LogInfo($"[RaidGovernor] blocked raid event '{ev.m_name}' in biome '{biome}'.");
+            BarrkBot.BarrkBotStats.OnRaidBlocked();
             return false;
         }
 

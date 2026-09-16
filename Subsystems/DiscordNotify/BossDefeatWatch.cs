@@ -10,17 +10,20 @@ namespace Wonderland.Subsystems.DiscordNotify
     /// ZoneSystem.GlobalKeyAdd("defeated_eikthyr", ...) (etc.) - a plain private method with exactly one
     /// overload, patched here by name.
     ///
-    /// GlobalKeyAdd fires for far more than boss kills (world-rate keys, per-player tracking keys, this
-    /// mod's own DiscordNotify "seen" marker, ...), so every call is filtered against a small known map
-    /// first before doing anything else.
+    /// GlobalKeyAdd fires for far more than boss kills (world-rate keys, per-player tracking keys, ...),
+    /// so every call is filtered against a small known map first before doing anything else.
     ///
-    /// Critical correctness point, decompile-confirmed in ZoneSystem.SetStartingGlobalKeys: every server
-    /// boot re-adds EVERY already-persisted global key by calling GlobalKeyAdd for each one in
-    /// ZNet.World.m_startingGlobalKeys - including bosses killed in a past session. A naive postfix would
-    /// re-announce every historical boss kill on every single restart. SnapshotExistingBossKeys (called
-    /// once from OnWorldReady, after ZoneSystem.Start has already run per the established
-    /// WorldRatesEngine.OnWorldReady precedent) pre-seeds the "already announced" set with whatever is
-    /// already true at boot, so only a GENUINELY new defeat during this session fires.
+    /// Critical correctness point, decompile-confirmed: every server boot re-adds EVERY persisted global
+    /// key through GlobalKeyAdd, AFTER ZNetScene.Awake (the OnWorldReady hook). The real boot order is
+    /// ZNet.Start -&gt; ServerLoadWorld -&gt; LoadWorld -&gt; ZoneSystem.Load (GlobalKeyAdd per key saved
+    /// in the .db, which is where defeated_* live - ZoneSystem.Save strips the server-option enum keys)
+    /// -&gt; WorldSetup -&gt; ZoneSystem.SetStartingGlobalKeys (GlobalKeyAdd per .fwl server-option key)
+    /// -&gt; OnWorldSaveLoaded. A snapshot taken from OnWorldReady is
+    /// therefore always empty and the first re-added boss key gets announced on every restart (the
+    /// "boss defeated: Eikthyr" on every boot seen in the live log). So the snapshot is taken from
+    /// DiscordNotifySubsystem.OnWorldLoaded (ZNet.ServerLoadWorld postfix, after every load path), and
+    /// the postfix refuses to announce anything until that has happened - key re-adds during load are
+    /// ignored even if the ordering ever shifts again.
     /// </summary>
     [HarmonyPatch(typeof(ZoneSystem), "GlobalKeyAdd")]
     public static class BossDefeatWatch
@@ -35,28 +38,44 @@ namespace Wonderland.Subsystems.DiscordNotify
         };
 
         private static readonly HashSet<string> Announced = new HashSet<string>();
+        private static bool _worldLoaded;
+
+        /// <summary>Pre-seeds the "already announced" set with every boss key already true once the
+        /// world has finished loading, and only then arms the postfix.</summary>
+        /// <summary>World progress right now, from the same keys: (defeated, remaining) display names.</summary>
+        public static (List<string> defeated, List<string> remaining) Snapshot()
+        {
+            var defeated = new List<string>();
+            var remaining = new List<string>();
+            foreach (KeyValuePair<string, string> kv in BossDisplayNames)
+            {
+                bool done = ZoneSystem.instance != null && ZoneSystem.instance.GetGlobalKey(kv.Key);
+                (done ? defeated : remaining).Add(kv.Value);
+            }
+            return (defeated, remaining);
+        }
 
         public static void SnapshotExistingBossKeys()
         {
             Announced.Clear();
-            if (ZoneSystem.instance == null)
+            if (ZoneSystem.instance != null)
             {
-                return;
-            }
-
-            foreach (string key in BossDisplayNames.Keys)
-            {
-                if (ZoneSystem.instance.GetGlobalKey(key))
+                foreach (string key in BossDisplayNames.Keys)
                 {
-                    Announced.Add(key);
+                    if (ZoneSystem.instance.GetGlobalKey(key))
+                    {
+                        Announced.Add(key);
+                    }
                 }
             }
+
+            _worldLoaded = true;
         }
 
         [HarmonyPostfix]
         public static void Postfix(string keyStr)
         {
-            if (string.IsNullOrEmpty(keyStr))
+            if (!_worldLoaded || string.IsNullOrEmpty(keyStr))
             {
                 return;
             }
@@ -73,6 +92,7 @@ namespace Wonderland.Subsystems.DiscordNotify
             }
 
             DiscordNotifySubsystem.AnnounceBossDefeat(bossName);
+            BarrkBot.BarrkBotStats.OnBossDefeated(bossName);
         }
     }
 }
