@@ -29,7 +29,12 @@ files claiming the same facts). BarrkBOT does **not** read it.
 - **`online` is honest.** Every periodic write says `true`; the one write from `Plugin.OnDestroy` on a clean
   shutdown says `false` with `players_online` 0 and every `online_now` false, because the reader only starts
   doubting a file after 60 minutes. A crash leaves the last periodic file, and then the reader's age
-  caveat is the signal. Switching the export off at runtime deletes the file.
+  caveat is the signal. Switching the export off at runtime deletes the file. BarrkBOT 6.1.20 keys the realm's
+  liveness on exactly this: an export that asserts `server.online` outranks any other export's roster (TortalPortal
+  Lite's `barrkbot_portals.json` beside ours has a per-portal `online` flag, and before 6.1.20 whichever file was
+  written last won, flipping the status to `online: null`) - so `server.online` must keep being written on every
+  `write_seconds` cycle, which it is (confirmed live 2026-09-16: `status.json` took `online: true`, day 152 from
+  "Wonderland 0.8.0").
 - **Rows are created on first activity, never pre-seeded.** An empty `players` map means "not recorded yet",
   and `players_notes` says so.
 - **Units are in the names** (`*_seconds`, `*_alltime`), and no counter name matches the reader's cadence
