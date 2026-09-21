@@ -37,11 +37,24 @@ namespace Wonderland.Subsystems.ItemFlow
         /// <summary>Who was last granted which item, and when: a peer that asks again for a stack it was
         /// granted and did not take (full inventory, over weight) is refused while the vacuum holds it.</summary>
         private static readonly Dictionary<ZDOID, (long peer, float at)> _grants = new Dictionary<ZDOID, (long, float)>();
+        /// <summary>Grants that did not turn into a pickup: the sweep found the item still there, still that
+        /// peer's, once the grace was over. Two in a row and that peer is refused for FailedGrantCooldownSeconds
+        /// - the stack stays floating instead of sinking on every request from someone who cannot take it.</summary>
+        private static readonly Dictionary<ZDOID, (long peer, int failures, float at)> _failedGrants = new Dictionary<ZDOID, (long, int, float)>();
         /// <summary>When this engine last took a waterborne item from a client, for VacuumEngine's fast path.</summary>
         private static readonly Dictionary<ZDOID, float> _claimedAt = new Dictionary<ZDOID, float>();
         private static readonly List<ZDOID> _purgeScratch = new List<ZDOID>();
         private const float GrantMemorySeconds = 60f;
         private const float ClaimMemorySeconds = 10f;
+        /// <summary>How long a grant keeps the sweep (and the vacuum) off a stack. A pickup needs one ZDO
+        /// delivery, the auto-pickup pull (15 m/s over at most 2 m) and the DestroyZDO back - well under a
+        /// second on a bad day. 0.10.4 raised this to 15 s; a client's copy has no Floating, so for every one
+        /// of those seconds a stack the player could not take sank in front of them, then jumped back to
+        /// the surface when the sweep reclaimed it. Three seconds is the 0.8.4 value the settle step was
+        /// reviewed against.</summary>
+        private const float PickupGraceSeconds = 3f;
+        private const int FailedGrantsBeforeCooldown = 2;
+        private const float FailedGrantCooldownSeconds = 20f;
         private static readonly HashSet<ZDOID> _sweptThisTick = new HashSet<ZDOID>();
         private static readonly List<ZDO> _scratch = new List<ZDO>();
         private static float _timer;
@@ -50,6 +63,7 @@ namespace Wonderland.Subsystems.ItemFlow
         {
             SubsystemRegistry.SafePatch(harmony, typeof(ZdoSetOwnerPatch));
             SubsystemRegistry.SafePatch(harmony, typeof(RoutedRpcHandlerPatch));
+            SubsystemRegistry.SafePatch(harmony, typeof(RoutedRpcRoutePatch));
         }
 
         public static void OnWorldReady()
@@ -156,18 +170,30 @@ namespace Wonderland.Subsystems.ItemFlow
                         continue;
                     }
 
+                    Vector3 pos = zdo.GetPosition();
+                    bool isServerOwner = zdo.IsOwner();
+
+                    // No "player nearby" hold-off here (0.10.4 had one, 5 m): a client only owns a waterborne
+                    // item because it dropped it or was granted it, and a grant carries its own grace above.
+                    // Holding off while a player stands beside a sunk stack meant the stack sank as they
+                    // approached and rose again when they walked away - the opposite of what they came for.
+
                     if (IsWaterborneItem(zdo, out float targetY, surfaceOffset))
                     {
-                        Vector3 pos = zdo.GetPosition();
-                        bool isServerOwner = zdo.IsOwner();
-
-                        // If not owned by server, or if sunken below surface, lift and claim
-                        if (!isServerOwner || Mathf.Abs(pos.y - targetY) > 0.05f)
+                        // Only a stack that is actually SINKING is lifted (0.10.11). Up to 0.10.10 a client-owned
+                        // stack was claimed even at the surface, and one above it (a raft deck, a shoreline) was
+                        // pulled DOWN to the surface line - 325 of 547 lifts in one evening were of stacks at or
+                        // above the surface, each a fresh ownership fight with the client beside it and a fresh
+                        // window for the ghost ClaimEcho cleans up. A stack at or above the surface is left with
+                        // whoever owns it; a client that sinks it gets it lifted on the next tick.
+                        if (pos.y < targetY - 0.05f)
                         {
+                            float wasY = pos.y;
                             pos.y = targetY;
                             if (!isServerOwner)
                             {
                                 _claimedAt[zdo.m_uid] = Time.time;
+                                NoteGrantOutcome(zdo);
                             }
                             zdo.SetOwner(serverSession);
                             zdo.SetPosition(pos);
@@ -176,7 +202,8 @@ namespace Wonderland.Subsystems.ItemFlow
                             zdo.Set(ZDOVars.s_bodyVelHash, Vector3.zero);
                             zdo.Set(ZDOVars.s_bodyAVelHash, Vector3.zero);
                             ZDOMan.instance.ForceSendZDO(zdo.m_uid);
-                            WonderlandDebug.LogAlways($"[WaterBuoyancy] Lifted waterborne item {zdo.m_uid} ({zdo.GetPrefab()}) to water surface y={targetY:0.00}m (was y={pos.y:0.00}m)");
+                            ClaimEcho.Note(zdo.m_uid);
+                            WonderlandDebug.LogAlways($"[WaterBuoyancy] Lifted waterborne item {zdo.m_uid} ({zdo.GetPrefab()}) to water surface y={targetY:0.00}m (was y={wasY:0.00}m)");
                         }
                     }
                 }
@@ -238,6 +265,20 @@ namespace Wonderland.Subsystems.ItemFlow
                 return false;
             }
 
+            // Guard: An item resting on solid dry terrain above the liquid table is not waterborne.
+            if (GetTerrainHeight(pos, out float terrainHeight))
+            {
+                if (pos.y >= terrainHeight - 0.15f && terrainHeight >= liquidLevel)
+                {
+                    return false;
+                }
+                float seaLevel = ZoneSystem.instance != null ? ZoneSystem.instance.m_waterLevel : 30f;
+                if (terrainHeight >= seaLevel && liquidLevel <= seaLevel + 0.01f)
+                {
+                    return false;
+                }
+            }
+
             targetY = liquidLevel + surfaceOffset;
 
             // An item is waterborne if it is at or submerged below the liquid surface,
@@ -248,9 +289,9 @@ namespace Wonderland.Subsystems.ItemFlow
 
         public static void HandlePickupRequest(ZDOID targetZDO, long senderPeerID)
         {
-            if (ZDOMan.instance == null || targetZDO.IsNone()) return;
+            if (ZDOMan.instance == null || targetZDO.IsNone() || senderPeerID == 0L) return;
             ZDO zdo = ZDOMan.instance.GetZDO(targetZDO);
-            if (zdo == null) return;
+            if (zdo == null || !zdo.IsValid()) return;
             if (!_itemDropPrefabHashes.Contains(zdo.GetPrefab())) return;
             if (VacuumEngine.WasMovedThisFrame(targetZDO))
             {
@@ -258,31 +299,77 @@ namespace Wonderland.Subsystems.ItemFlow
                 // it now would let the player pick up a copy in the frame between the two messages.
                 return;
             }
+
+            float now = Time.time;
+
             if (zdo.GetOwner() == senderPeerID)
             {
-                // The requester already owns it as far as this server knows, yet asks - its copy disagrees
-                // (a stale packet crossed an ownership change). Re-send the owner with a higher revision so
-                // it learns, instead of leaving a stack nobody simulates.
+                // The requester already owns it on the server, yet asks - its local client state is either
+                // awaiting confirmation or needs a higher revision to accept ownership.
+                // Advance revisions and force-send to the client so its ItemDrop.CanPickup() clears.
+                _recentPickups[targetZDO] = now + PickupGraceSeconds;
+                _grants[targetZDO] = (senderPeerID, now);
                 zdo.IncreaseOwnerRevision();
-                ZDOMan.instance.ForceSendZDO(senderPeerID, targetZDO);
-                return;
-            }
-            if (_grants.TryGetValue(targetZDO, out (long peer, float at) last) && last.peer == senderPeerID
-                && Time.time - last.at > 3f && VacuumEngine.IsHeld(targetZDO))
-            {
-                // Granted to this same player once already, grace long over, stack still here: they could
-                // not take it (Player.AutoPickup asks for ownership before it checks room or weight). The
-                // chest's turn - the client's own retry backoff outlasts the settle hold.
+                zdo.DataRevision += 4096;
+                ZDOMan.instance.ForceSendZDO(targetZDO);
+                ClaimEcho.Note(targetZDO);
+                WonderlandDebug.LogInfo($"[WaterBuoyancy] Confirmed item {targetZDO} ({zdo.GetPrefab()}) ownership to peer {senderPeerID} (rev bumped)");
                 return;
             }
 
-            if (zdo.IsOwner() || !zdo.HasOwner())
+            if (_failedGrants.TryGetValue(targetZDO, out (long peer, int failures, float at) failed)
+                && failed.peer == senderPeerID && failed.failures >= FailedGrantsBeforeCooldown
+                && now - failed.at < FailedGrantCooldownSeconds)
             {
-                _recentPickups[targetZDO] = Time.time + 3f;
-                _grants[targetZDO] = (senderPeerID, Time.time);
-                zdo.SetOwner(senderPeerID);
-                ZDOMan.instance.ForceSendZDO(targetZDO);
-                WonderlandDebug.LogInfo($"[WaterBuoyancy] Granted pickup ownership of item {targetZDO} ({zdo.GetPrefab()}) to peer {senderPeerID}");
+                // This peer was given the stack twice and it was still lying there each time the grace ran
+                // out - they cannot take it (full, over weight, swimming). Vanilla's ItemDrop.RequestOwn
+                // backs off exponentially, so refusing for a while costs them nothing they would have had;
+                // granting again would only sink the stack in front of them once more. Not logged per
+                // request: their retries are what this is here to absorb.
+                return;
+            }
+
+            if (_grants.TryGetValue(targetZDO, out (long peer, float at) last) && last.peer == senderPeerID
+                && now - last.at > PickupGraceSeconds && VacuumEngine.IsHeld(targetZDO))
+            {
+                // Granted to this same player once already, grace expired, stack still here: Vacuum gets its turn.
+                return;
+            }
+
+            _recentPickups[targetZDO] = now + PickupGraceSeconds;
+            _grants[targetZDO] = (senderPeerID, now);
+
+            // Authoritative grant: Transfer ownership directly to the requesting player,
+            // regardless of whether server or another peer was previously recorded.
+            zdo.SetOwner(senderPeerID);
+            zdo.DataRevision += 4096;
+            ZDOMan.instance.ForceSendZDO(targetZDO);
+            ClaimEcho.Note(targetZDO);
+            WonderlandDebug.LogInfo($"[WaterBuoyancy] Granted pickup ownership of item {targetZDO} ({zdo.GetPrefab()}) to peer {senderPeerID}");
+        }
+
+        /// <summary>Called by the sweep as it takes a waterborne item back from a client. If that client was
+        /// granted the item and the grace has run out, the pickup did not happen: count it against that
+        /// peer. A different peer, or a claim inside the grace (cannot happen - the sweep skips graced
+        /// items - but cheap to be exact about), starts the count over.</summary>
+        private static void NoteGrantOutcome(ZDO zdo)
+        {
+            if (!_grants.TryGetValue(zdo.m_uid, out (long peer, float at) grant))
+            {
+                return;
+            }
+            float now = Time.time;
+            if (zdo.GetOwner() != grant.peer || now - grant.at < PickupGraceSeconds)
+            {
+                return;
+            }
+            int failures = _failedGrants.TryGetValue(zdo.m_uid, out (long peer, int failures, float at) previous) && previous.peer == grant.peer
+                ? previous.failures + 1
+                : 1;
+            _failedGrants[zdo.m_uid] = (grant.peer, failures, now);
+            if (failures == FailedGrantsBeforeCooldown)
+            {
+                WonderlandDebug.LogInfo($"[WaterBuoyancy] Peer {grant.peer} was granted item {zdo.m_uid} ({zdo.GetPrefab()}) {failures} times without picking it up - refusing that peer for {FailedGrantCooldownSeconds:0}s, the item stays afloat.");
             }
         }
 
@@ -380,6 +467,21 @@ namespace Wonderland.Subsystems.ItemFlow
                     _claimedAt.Remove(_purgeScratch[i]);
                 }
             }
+            if (_failedGrants.Count > 0)
+            {
+                _purgeScratch.Clear();
+                foreach (KeyValuePair<ZDOID, (long peer, int failures, float at)> kvp in _failedGrants)
+                {
+                    if (now - kvp.Value.at > FailedGrantCooldownSeconds)
+                    {
+                        _purgeScratch.Add(kvp.Key);
+                    }
+                }
+                for (int i = 0; i < _purgeScratch.Count; i++)
+                {
+                    _failedGrants.Remove(_purgeScratch[i]);
+                }
+            }
         }
     }
 
@@ -392,9 +494,10 @@ namespace Wonderland.Subsystems.ItemFlow
             // Two holders of server ownership, one gate: WaterBuoyancy keeps waterborne items at the surface,
             // VacuumEngine keeps a claimed ground stack for its settle step. Both let a player's own pickup
             // request through (HandlePickupRequest sets the grace before it calls SetOwner).
-            if (WaterBuoyancyEngine.ShouldBlockOwnerChange(__instance, uid) || VacuumEngine.ShouldBlockOwnerChange(__instance, uid))
+            if (WaterBuoyancyEngine.ShouldBlockOwnerChange(__instance, uid) || VacuumEngine.ShouldBlockOwnerChange(__instance, uid)
+                || Wonderland.Core.Data.HullBorrow.ShouldBlockOwnerChange(__instance, uid))
             {
-                return false;
+                return false; // (third: a hull borrowed for a cargo write must not be handed back by ReleaseZDOS before the write runs)
             }
             return true;
         }
@@ -408,9 +511,24 @@ namespace Wonderland.Subsystems.ItemFlow
         [HarmonyPrefix]
         public static void Prefix(ZRoutedRpc.RoutedRPCData data)
         {
-            if (data.m_methodHash == RequestOwnHash && !data.m_targetZDO.IsNone())
+            if (data != null && data.m_methodHash == RequestOwnHash && !data.m_targetZDO.IsNone())
             {
                 WaterBuoyancyEngine.HandlePickupRequest(data.m_targetZDO, data.m_senderPeerID);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(ZRoutedRpc), "RouteRPC")]
+    public static class RoutedRpcRoutePatch
+    {
+        private static readonly int RequestOwnHash = "RPC_RequestOwn".GetStableHashCode();
+
+        [HarmonyPrefix]
+        public static void Prefix(ZRoutedRpc.RoutedRPCData rpcData)
+        {
+            if (rpcData != null && rpcData.m_methodHash == RequestOwnHash && !rpcData.m_targetZDO.IsNone())
+            {
+                WaterBuoyancyEngine.HandlePickupRequest(rpcData.m_targetZDO, rpcData.m_senderPeerID);
             }
         }
     }

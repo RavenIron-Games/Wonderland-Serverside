@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Wonderland.Core;
@@ -31,9 +32,9 @@ namespace Wonderland.Subsystems.ItemFlow
         public const string VacuumTag = "Vacuum";
         public const string HarvestTag = "AutoHarvest";
 
-        private static ZdoSpatialQuery.PrefabSetScanner _containerScanner;
+        private static BudgetedSweep? _containerSweep;
+        private static readonly Action<ZDO> VisitBackgroundContainer = ProcessBackgroundContainer;
         private static float _vacuumTimer;
-        private static readonly List<ZDO> _scanBuffer = new List<ZDO>();
         private static readonly HashSet<ZDOID> _destroyedThisBatch = new HashSet<ZDOID>();
         private static readonly List<ZDO> _pendingGroundDestroy = new List<ZDO>();
         private static readonly HashSet<int> _containerPrefabHashes = new HashSet<int>();
@@ -63,6 +64,16 @@ namespace Wonderland.Subsystems.ItemFlow
         private static readonly Dictionary<ZDOID, GroundHold> _holds = new Dictionary<ZDOID, GroundHold>();
         private static readonly List<ZDOID> _holdScratch = new List<ZDOID>();
         private static readonly HashSet<ZDOID> _holdContainersThisFrame = new HashSet<ZDOID>();
+        /// <summary>Ground stacks a container wanted this pass but TryTakeOwnership left alone because their
+        /// owning client still reports them moving (see the at-rest gate there). Per pass, like
+        /// _visitedThisPass: VacuumAround must not file them as unwanted - they get the next pass, at rest.</summary>
+        private static readonly HashSet<ZDOID> _movingThisPass = new HashSet<ZDOID>();
+        /// <summary>Above this speed (m/s, squared) a client-owned stack is still falling, sliding or being
+        /// carried and is not claimed: the claim freezes it on every client at the server's last-known position
+        /// - the "jerks to a stop mid-air" a player sees when a stack is grabbed before it lands. A sleeping
+        /// Rigidbody writes exactly zero (ZSyncTransform.OwnerSync sets s_velHash from GetVelocity() whenever
+        /// it changes), so at rest this gate costs nothing.</summary>
+        private const float AtRestSpeedSqr = 0.05f * 0.05f;
         /// <summary>Ground stacks a pass looked at and no container in reach would take, with the time until
         /// which they stay out of the qualifying set (the containers around them are not loaded for them).</summary>
         private static readonly Dictionary<ZDOID, float> _unwantedUntil = new Dictionary<ZDOID, float>();
@@ -90,7 +101,9 @@ namespace Wonderland.Subsystems.ItemFlow
         {
             public uint Revision;
             public float SeenAt;
-            public readonly HashSet<string> Names = new HashSet<string>();
+            /// <summary>Shared item name -> total count across stacks at Revision (0.10.11: counts, so a chest
+            /// holding only a station's reserve is not reloaded every visit).</summary>
+            public readonly Dictionary<string, int> Names = new Dictionary<string, int>();
         }
 
         private static readonly Dictionary<ZDOID, ContainerNames> _containerNames = new Dictionary<ZDOID, ContainerNames>();
@@ -151,7 +164,7 @@ namespace Wonderland.Subsystems.ItemFlow
 
         public static void Initialize()
         {
-            _containerScanner = new ZdoSpatialQuery.PrefabSetScanner(ContainerRegistry.PrefabNames);
+            _containerSweep = new BudgetedSweep(ContainerRegistry.PrefabNames);
 
             _containerPrefabHashes.Clear();
             foreach (string name in ContainerRegistry.PrefabNames)
@@ -197,7 +210,7 @@ namespace Wonderland.Subsystems.ItemFlow
 
         public static void OnUpdate(float dt)
         {
-            if (_containerScanner == null)
+            if (_containerSweep == null)
             {
                 return;
             }
@@ -216,9 +229,10 @@ namespace Wonderland.Subsystems.ItemFlow
                 {
                     _vacuumTimer = 0f;
                     BeginVacuumPass();
-                    ProcessVacuumBatch();
                     ProcessVacuumNearPlayers();
+                    _containerSweep.Grant(Mathf.Max(1, WonderlandConfig.VacuumBatchSize?.Value ?? 25));
                 }
+                ProcessVacuumBatch();
                 ProcessMaturedHolds();
             }
             else if (_holds.Count > 0)
@@ -263,26 +277,26 @@ namespace Wonderland.Subsystems.ItemFlow
         private static void BeginVacuumPass()
         {
             _visitedThisPass.Clear();
+            _movingThisPass.Clear();
         }
 
         /// <summary>The world-wide background round-robin: VacuumBatchSize chunks of the container-type
-        /// scanner per pass. Covers chests nobody is standing near (and carries the overflow guard and
-        /// cache drain to them); latency here scales with world size by design.</summary>
+        /// scanner per pass, granted at the pass and visited over the frames that follow within
+        /// SweepBudgetMs each (since 0.10.9 - one frame per pass used to carry the whole batch, 250-440 ms
+        /// on the live world whenever the scanner reached a common chest type). Covers chests nobody is
+        /// standing near (and carries the overflow guard and cache drain to them); latency here scales
+        /// with world size by design. Runs after the near-player pass now, not before: that pass judges
+        /// every container in reach itself, so nothing it does depended on the background's marks.</summary>
         private static void ProcessVacuumBatch()
         {
-            _scanBuffer.Clear();
-            int budget = Mathf.Max(1, WonderlandConfig.VacuumBatchSize?.Value ?? 25);
-            for (int i = 0; i < budget; i++)
-            {
-                _containerScanner.Advance(_scanBuffer);
-            }
+            _containerSweep!.Run(WonderlandConfig.SweepBudgetMs?.Value ?? 2f, VisitBackgroundContainer);
+        }
 
-            foreach (ZDO containerZdo in _scanBuffer)
+        private static void ProcessBackgroundContainer(ZDO containerZdo)
+        {
+            if (_visitedThisPass.Add(containerZdo.m_uid))
             {
-                if (_visitedThisPass.Add(containerZdo.m_uid))
-                {
-                    ProcessContainer(containerZdo);
-                }
+                ProcessContainer(containerZdo);
             }
         }
 
@@ -369,7 +383,7 @@ namespace Wonderland.Subsystems.ItemFlow
                     {
                         continue;
                     }
-                    if (known && !cached.Names.Contains(_groundNames[i]))
+                    if (known && !cached.Names.ContainsKey(_groundNames[i]))
                     {
                         continue; // held none of that type when last read, and nothing has written it since
                     }
@@ -393,9 +407,9 @@ namespace Wonderland.Subsystems.ItemFlow
             for (int i = 0; i < _groundItems.Count; i++)
             {
                 ZDOID uid = _groundItems[i].m_uid;
-                if (_groundTruncated[i] || _destroyedThisBatch.Contains(uid) || _holds.ContainsKey(uid))
+                if (_groundTruncated[i] || _destroyedThisBatch.Contains(uid) || _holds.ContainsKey(uid) || _movingThisPass.Contains(uid))
                 {
-                    continue; // never judged, moved, or settling - none of those is "unwanted"
+                    continue; // never judged, moved, settling, or still in motion - none of those is "unwanted"
                 }
                 RememberUnwanted(uid, now);
             }
@@ -440,9 +454,31 @@ namespace Wonderland.Subsystems.ItemFlow
             return zdo.GetBool(ZDOVars.s_piece) || zdo.GetFloat(ZDOVars.s_growStart) > 0f;
         }
 
+        /// <summary>True when the cache knows this container's contents at its CURRENT DataRevision and the
+        /// item (by shared name, e.g. "$item_coal") is not among them - a load that can be skipped. Unknown
+        /// or stale entries answer false: load it. Shared with ProductionSupplyEngine since 0.10.11, where a
+        /// station visit was loading every chest in range once per fuel and once per ore the station knows,
+        /// found or not (70-90 ms per visit in a dense base).</summary>
+        public static bool KnownNotToHold(ZDO containerZdo, string sharedName)
+        {
+            return KnownToHoldAtMost(containerZdo, sharedName, 0);
+        }
+
+        /// <summary>True when the cache knows this container at its CURRENT DataRevision and it holds no more
+        /// than <paramref name="count"/> of the item - for production supply's reserve: a chest with only the
+        /// reserve left would otherwise be loaded on every visit of every station in range and rejected after.</summary>
+        public static bool KnownToHoldAtMost(ZDO containerZdo, string sharedName, int count)
+        {
+            if (!_containerNames.TryGetValue(containerZdo.m_uid, out ContainerNames cached) || cached.Revision != containerZdo.DataRevision)
+            {
+                return false;
+            }
+            return !cached.Names.TryGetValue(sharedName, out int held) || held <= count;
+        }
+
         /// <summary>Records what the container holds at its current DataRevision (called after its load, or
         /// after its save when it changed, so the revision on file is the one the cache is keyed to).</summary>
-        private static void RememberContainerNames(ZDO containerZdo, Inventory inventory)
+        public static void RememberContainerNames(ZDO containerZdo, Inventory inventory)
         {
             float now = Time.time;
             if (!_containerNames.TryGetValue(containerZdo.m_uid, out ContainerNames entry))
@@ -464,7 +500,8 @@ namespace Wonderland.Subsystems.ItemFlow
                 string name = item?.m_shared?.m_name;
                 if (!string.IsNullOrEmpty(name))
                 {
-                    entry.Names.Add(name);
+                    entry.Names.TryGetValue(name, out int held);
+                    entry.Names[name] = held + item.m_stack;
                 }
             }
             entry.Revision = containerZdo.DataRevision;
@@ -546,6 +583,17 @@ namespace Wonderland.Subsystems.ItemFlow
             }
             string prefabName = prefab.name;
             if (IsContainerExcluded(prefabName))
+            {
+                return;
+            }
+
+            // A hull a client is simulating is off limits whatever its speed: the vacuum moves a stack into the
+            // container and destroys the ground ZDO, and a container write that the owner's revision stream
+            // discards (a floating hull never sleeps - Ship.CustomFixedUpdate wakes the body every step) would
+            // leave nothing behind. Only a hull nobody is simulating - moored and crew gone, or beyond every
+            // owner's active area - takes vacuumed stacks. (0.10.8 review: the 0.10.3 velocity-only guard had
+            // been covering this by accident.)
+            if (prefab.GetComponent<Ship>() != null && ShipAttachment.IsSimulatedByClient(containerZdo))
             {
                 return;
             }
@@ -761,6 +809,12 @@ namespace Wonderland.Subsystems.ItemFlow
         // broken for nothing. Stacks born on the server - a sweep's drops, a floating item - are moved
         // at once: no client can be mid-pickup on a ZDO it does not own, and a grant made later in this
         // frame is refused because HandlePickupRequest checks WasMovedThisFrame.
+        //
+        // The claim is only made once the stack is at rest (0.10.5, AtRestSpeedSqr). Every other client
+        // renders a claimed stack from the ZDO alone: ZSyncTransform.ClientSync lerps it to the server's
+        // last-known position, turns gravity off and puts the body to sleep. Claimed while still falling,
+        // a stack visibly jumps back up to where the server last saw it and hangs there for the hold -
+        // the "jitter" reported against 0.10.4. At rest the same claim is invisible.
 
         /// <summary>Match-required: only tops up an item type the container already holds at least one of.</summary>
         private static bool VacuumGroundItemsInto(ZDO containerZdo, Inventory inventory, int containerPrefabHash)
@@ -934,6 +988,21 @@ namespace Wonderland.Subsystems.ItemFlow
             }
 
             long previousOwner = groundZdo.GetOwner();
+
+            // At-rest gate: a stack its client still reports moving is left to land first. Claiming it now
+            // would pin it on every screen at the server's last-known position - a jump backwards on the
+            // way down, then a mid-air freeze for the whole hold. The next pass gets it at rest, where the
+            // claim changes nothing anyone can see; VacuumAround does not file it as unwanted meanwhile.
+            // Only a connected owner is simulating the stack: a velocity left behind by a peer that
+            // disconnected mid-slide, or on an unowned ZDO, is stale and would gate it forever.
+            if (previousOwner != 0L && IsConnectedPeer(previousOwner)
+                && (groundZdo.GetVec3(ZDOVars.s_velHash, Vector3.zero).sqrMagnitude > AtRestSpeedSqr
+                    || groundZdo.GetVec3(ZDOVars.s_bodyVelHash, Vector3.zero).sqrMagnitude > AtRestSpeedSqr))
+            {
+                _movingThisPass.Add(uid);
+                return false;
+            }
+
             groundZdo.SetOwner(session);
             groundZdo.DataRevision += 4096;
             groundZdo.Set(ZDOVars.s_velHash, Vector3.zero);
@@ -942,6 +1011,7 @@ namespace Wonderland.Subsystems.ItemFlow
             // The previous owner is the one client that must hear now; everyone else picks the new owner up
             // on their next regular send (the revision rose).
             ZDOMan.instance.ForceSendZDO(previousOwner, uid);
+            ClaimEcho.Note(uid);
             _holds[uid] = new GroundHold(now + HoldSeconds, containerZdo.m_uid);
             return false;
         }
@@ -1029,10 +1099,16 @@ namespace Wonderland.Subsystems.ItemFlow
                 return; // someone already has it
             }
             long to = TryFindNearestPlayer(ground.GetPosition(), 96f, out ConnectedCharacter nearest) ? nearest.Peer.m_uid : 0L;
+            // Provide a slight downward velocity: when the client takes back ownership,
+            // ZSyncTransform.OwnerSync applies s_bodyVelHash to m_body.linearVelocity,
+            // which forces Unity PhysX to wake up the sleeping Rigidbody so gravity pulls it down.
+            ground.Set(ZDOVars.s_velHash, new Vector3(0f, -0.1f, 0f));
+            ground.Set(ZDOVars.s_bodyVelHash, new Vector3(0f, -0.1f, 0f));
             ground.SetOwner(to);
             if (to != 0L)
             {
                 ZDOMan.instance.ForceSendZDO(to, ground.m_uid);
+                ClaimEcho.Note(ground.m_uid);
             }
         }
 

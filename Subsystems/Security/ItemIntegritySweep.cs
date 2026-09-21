@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Wonderland.Core;
@@ -24,40 +25,31 @@ namespace Wonderland.Subsystems.Security
     /// </summary>
     public static class ItemIntegritySweep
     {
-        private static ZdoSpatialQuery.PrefabSetScanner _scanner;
+        private static BudgetedSweep? _sweep;
         private static float _timer;
-        private static readonly List<ZDO> _buffer = new List<ZDO>();
+        private static readonly Action<ZDO> CheckDelegate = CheckContainer;
 
         public static void Initialize()
         {
-            _scanner = new ZdoSpatialQuery.PrefabSetScanner(ContainerRegistry.PrefabNames);
+            _sweep = new BudgetedSweep(ContainerRegistry.PrefabNames);
         }
 
         public static void OnUpdate(float dt)
         {
-            if (_scanner == null || WonderlandConfig.ItemIntegritySweepEnabled?.Value != true)
+            if (_sweep == null || WonderlandConfig.ItemIntegritySweepEnabled?.Value != true)
             {
                 return;
             }
 
             _timer += dt;
-            if (_timer < (WonderlandConfig.ItemIntegritySweepInterval?.Value ?? 30f))
+            if (_timer >= (WonderlandConfig.ItemIntegritySweepInterval?.Value ?? 30f))
             {
-                return;
+                _timer = 0f;
+                _sweep.Grant(Mathf.Max(1, WonderlandConfig.ItemIntegritySweepBatchSize?.Value ?? 25));
             }
-            _timer = 0f;
-
-            _buffer.Clear();
-            int budget = Mathf.Max(1, WonderlandConfig.ItemIntegritySweepBatchSize?.Value ?? 25);
-            for (int i = 0; i < budget; i++)
-            {
-                _scanner.Advance(_buffer);
-            }
-
-            foreach (ZDO zdo in _buffer)
-            {
-                CheckContainer(zdo);
-            }
+            // Same coverage per interval as before, visited over the frames that follow within SweepBudgetMs
+            // each (0.10.11; the one-frame pass was 89 ms on the live world - the last sweep 0.10.9 missed).
+            _sweep.Run(WonderlandConfig.SweepBudgetMs?.Value ?? 2f, CheckDelegate);
         }
 
         private static void CheckContainer(ZDO zdo)
@@ -66,6 +58,14 @@ namespace Wonderland.Subsystems.Security
             {
                 return;
             }
+
+            // Admin bypass: containers created by authenticated server admins are exempt from integrity sweep
+            long creator = zdo.GetLong(ZDOVars.s_creator, 0L);
+            if (AdminRegistry.IsAdminPlayerId(creator))
+            {
+                return;
+            }
+
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
             Container template = ContainerRegistry.ResolveTemplate(prefab);
             if (template == null)
@@ -80,14 +80,31 @@ namespace Wonderland.Subsystems.Security
                 return;
             }
 
-            if (CheckInventory(inventory, $"container '{prefab.name}' at {zdo.GetPosition()}"))
+            string where = $"container '{prefab.name}'";
+            bool correct = WonderlandConfig.ItemIntegritySweepCorrect?.Value == true;
+            if (correct && prefab.GetComponent<Ship>() != null && ShipAttachment.IsSimulatedByClient(zdo))
+            {
+                // A hull a client is simulating discards a plain server write, and its owner's next packet
+                // would put a removed item straight back. Judged quietly on the server's copy; if anything
+                // must go, the hull is borrowed the way the rows anchor is (HullBorrow, 0.10.11) and this
+                // same check runs again - audit line, removal and write - on the copy that arrives with the
+                // hand-over, as the hull's owner. Detect-only mode needs no write and takes the plain path.
+                if (CheckInventory(inventory, where, zdo.GetPosition(), quiet: true) && HullBorrow.Request(zdo, CheckDelegate))
+                {
+                    WonderlandDebug.LogAlways($"[ItemIntegritySweep] '{prefab.name}' at {zdo.GetPosition():F0} needs correcting - asked its owner {zdo.GetOwner()} for the hull.");
+                }
+                return;
+            }
+
+            if (CheckInventory(inventory, where, zdo.GetPosition(), quiet: false))
             {
                 ZdoInventoryIO.Save(zdo, inventory);
             }
         }
 
-        /// <summary>Returns true if anything was removed (caller should persist the change).</summary>
-        private static bool CheckInventory(Inventory inventory, string where)
+        /// <summary>Returns true if anything was removed (caller should persist the change). <paramref name="quiet"/>
+        /// judges without writing the audit line - for a look at a copy that will not be the one written.</summary>
+        private static bool CheckInventory(Inventory inventory, string where, Vector3 location, bool quiet)
         {
             if (inventory == null)
             {
@@ -104,7 +121,10 @@ namespace Wonderland.Subsystems.Security
                     continue;
                 }
 
-                AuditLog.Flag("ItemIntegritySweep", where, $"implausible item found: {reason}{(correct ? " - removed." : " - left in place (detect-only).")}");
+                if (!quiet)
+                {
+                    AuditLog.Flag("ItemIntegritySweep", where, $"implausible item found: {reason}{(correct ? " - removed." : " - left in place (detect-only).")}", 0L, null, location);
+                }
                 if (correct)
                 {
                     toRemove.Add(item);

@@ -23,6 +23,7 @@ namespace Wonderland.Subsystems.ItemFlow
             try
             {
                 VacuumEngine.OnClientDestroy(sender, pkg);
+                Core.Data.ClaimEcho.OnClientDestroyBatch(sender, pkg); // a ghost left by a claim that raced this pickup
             }
             catch (System.Exception ex)
             {

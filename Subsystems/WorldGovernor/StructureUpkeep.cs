@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Wonderland.Core;
@@ -26,6 +27,19 @@ namespace Wonderland.Subsystems.WorldGovernor
         private static readonly Dictionary<int, float> _baseHealth = new Dictionary<int, float>();
         private static ZdoSpatialQuery.PrefabSetSweeper _sweep;
         private static float _timer;
+
+        // Boats: their own loop and rate (section 18, 0.10.11), and it works at sea. Four hull prefabs, so
+        // the world sweep is a few dozen chunks per pass, on the frame budget like every other sweep; the
+        // near-player pass uses the structure radius, and the pilot is always inside it of their own hull.
+        // A hull a client is simulating is repaired through that client (vanilla RPC_Repair - its WearNTear
+        // sets full health on the authoritative copy and broadcasts the visual), a hull nobody simulates is
+        // written by the server. No steered/velocity gate: up to 0.10.10 that gate (s_user, 0.03 m/s) left
+        // only beached boats ever repaired.
+        private static readonly HashSet<int> _shipPrefabHashes = new HashSet<int>();
+        private static BudgetedSweep? _boatSweep;
+        private static float _boatTimer;
+        private static readonly Action<ZDO> RepairBoatDelegate = RepairBoatFromSweep;
+        private const int BoatSweepChunksPerPass = 128;
         private static readonly List<ZDO> _buffer = new List<ZDO>();
         private static readonly List<ZDO> _scratch = new List<ZDO>();
 
@@ -44,12 +58,15 @@ namespace Wonderland.Subsystems.WorldGovernor
         public static void Initialize()
         {
             _baseHealth.Clear();
+            _shipPrefabHashes.Clear();
             _sweep = null;
+            _boatSweep = null;
             if (ZNetScene.instance == null)
             {
                 return;
             }
 
+            var shipNames = new List<string>();
             foreach (GameObject prefab in ZNetScene.instance.m_prefabs)
             {
                 if (prefab == null)
@@ -62,15 +79,26 @@ namespace Wonderland.Subsystems.WorldGovernor
                     continue;
                 }
                 _baseHealth[prefab.name.GetStableHashCode()] = wear.m_health;
+                if (prefab.GetComponent<Ship>() != null)
+                {
+                    _shipPrefabHashes.Add(prefab.name.GetStableHashCode());
+                    shipNames.Add(prefab.name);
+                }
             }
 
             _sweep = new ZdoSpatialQuery.PrefabSetSweeper(_baseHealth.Keys);
-            WonderlandDebug.LogInfo($"[StructureUpkeep] tracking {_baseHealth.Count} WearNTear-bearing prefab types.");
+            _boatSweep = new BudgetedSweep(shipNames);
+            WonderlandDebug.LogInfo($"[StructureUpkeep] tracking {_baseHealth.Count} WearNTear-bearing prefab types; boats on their own loop: {string.Join(", ", shipNames)}.");
         }
 
         public static void OnUpdate(float dt)
         {
-            if (_sweep == null || WonderlandConfig.StructureUpkeepEnabled?.Value != true)
+            if (_sweep == null)
+            {
+                return;
+            }
+            UpdateBoats(dt);
+            if (WonderlandConfig.StructureUpkeepEnabled?.Value != true)
             {
                 return;
             }
@@ -99,6 +127,73 @@ namespace Wonderland.Subsystems.WorldGovernor
                     $"[StructureUpkeep] repaired {nearPlayers + background} piece(s): " +
                     $"{nearPlayers} near players, {background} from the background sweep{clipped}.");
             }
+        }
+
+        private static void UpdateBoats(float dt)
+        {
+            if (_boatSweep == null || WonderlandConfig.BoatUpkeepEnabled?.Value != true)
+            {
+                return;
+            }
+            _boatTimer += dt;
+            if (_boatTimer >= (WonderlandConfig.BoatUpkeepInterval?.Value ?? 60f))
+            {
+                _boatTimer = 0f;
+                float radius = WonderlandConfig.StructureUpkeepPlayerRadius?.Value ?? 128f;
+                foreach (ConnectedCharacter character in ConnectedCharacters.All())
+                {
+                    ZdoSpatialQuery.FindNear(character.Position, radius, _scratch);
+                    for (int i = 0; i < _scratch.Count; i++)
+                    {
+                        if (_shipPrefabHashes.Contains(_scratch[i].GetPrefab()))
+                        {
+                            RepairBoat(_scratch[i], "near player");
+                        }
+                    }
+                }
+                _boatSweep.Grant(BoatSweepChunksPerPass);
+            }
+            _boatSweep.Run(WonderlandConfig.SweepBudgetMs?.Value ?? 2f, RepairBoatDelegate);
+        }
+
+        private static void RepairBoatFromSweep(ZDO zdo)
+        {
+            RepairBoat(zdo, "world sweep");
+        }
+
+        private static bool RepairBoat(ZDO zdo, string via)
+        {
+            if (zdo == null || !zdo.IsValid() || !_baseHealth.TryGetValue(zdo.GetPrefab(), out float baseHealth))
+            {
+                return false;
+            }
+            float max = baseHealth * WorldLevelMultiplier();
+            float current = zdo.GetFloat(ZDOVars.s_health, max);
+            if (current >= max - 0.01f)
+            {
+                return false;
+            }
+            string name = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(zdo.GetPrefab())?.name ?? "ship" : "ship";
+
+            if (ShipAttachment.IsSimulatedByClient(zdo))
+            {
+                // Its owner's WearNTear holds the truth and rewrites the ZDO every frame: a server write is
+                // lost, and would bump the copy HullBorrow relies on. Vanilla's RPC_Repair, run BY the owner,
+                // sets full health on its authoritative copy and broadcasts RPC_HealthChanged - no effects.
+                ZRoutedRpc.instance?.InvokeRoutedRPC(zdo.GetOwner(), zdo.m_uid, "RPC_Repair");
+                WonderlandDebug.LogInfo($"[BoatUpkeep] '{name}' at {zdo.GetPosition():F0}: {current:0} -> {max:0} through its owner ({via}).");
+                return true;
+            }
+
+            zdo.Set(ZDOVars.s_health, max);
+            long owner = zdo.GetOwner();
+            if (owner != 0L && owner != ZNet.GetUID())
+            {
+                ZRoutedRpc.instance?.InvokeRoutedRPC(owner, zdo.m_uid, "RPC_Repair"); // a far owner without an instance simply drops it
+            }
+            ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, zdo.m_uid, "RPC_HealthChanged", max);
+            WonderlandDebug.LogInfo($"[BoatUpkeep] '{name}' at {zdo.GetPosition():F0}: {current:0} -> {max:0} written by the server ({via}).");
+            return true;
         }
 
         /// <summary>
@@ -173,6 +268,11 @@ namespace Wonderland.Subsystems.WorldGovernor
             // placed has m_randomInitialDamage set), so repairing them would quietly turn every
             // abandoned village and dungeon on the map pristine. They are also the overwhelming
             // majority of WearNTear ZDOs in a world, so skipping them is most of the sweep's cost.
+            if (_shipPrefabHashes.Contains(zdo.GetPrefab()))
+            {
+                return false; // boats have their own loop and rate (UpdateBoats)
+            }
+
             if (playerBuiltOnly && zdo.GetLong(ZDOVars.s_creator, 0L) == 0L)
             {
                 return false;
@@ -192,18 +292,30 @@ namespace Wonderland.Subsystems.WorldGovernor
             // ZDO.GetOwner()) sends the player's own hammer RPC_Repair to a machine with nothing
             // registered to receive it, so manual repair silently stops working until the client
             // claims the ZDO back through ReleaseNearbyZDOS.
+            // Write through server ZDOExtraData to update server state and world save.
             zdo.Set(ZDOVars.s_health, max);
 
-            // The owning client caches health in WearNTear.m_healthPercentage and only ever refreshes
-            // it in Awake or RPC_HealthChanged. Without this the piece keeps its worn material and
-            // damaged hover text, and - because UpdateWear gates rain damage on
-            // GetHealthPercentage() > 0.5f - goes on behaving as if it were still at half health.
-            // Routing the vanilla RPC by ZDOID reaches whichever client has the piece instantiated
-            // without the server needing an instance of its own; ZRoutedRpc.HandleRoutedRPC drops it
-            // harmlessly wherever no instance exists, including here on the server.
+            // Crucial fix: The owning client simulates piece/boat damage and caches health in its local
+            // in-memory ZDO. If we only invoke RPC_HealthChanged, the client updates its visual mesh
+            // (m_healthPercentage) but its local ZDO remains at the old damaged health. The instant
+            // the piece or boat takes any damage (or is hit), ApplyDamage reads the client's local ZDO,
+            // sees the old damaged value, and reverts the health bar back to the previous damage.
+            // By invoking vanilla's RPC_Repair on the owning client, the client executes:
+            //   m_nview.GetZDO().Set(ZDOVars.s_health, m_health);
+            //   m_nview.InvokeRPC(ZNetView.Everybody, "RPC_HealthChanged", m_health);
+            // which authoritatively sets full health on the client's ZDO, making the auto heal permanent and holding.
             if (_broadcastBudget > 0)
             {
                 _broadcastBudget--;
+                long owner = zdo.GetOwner();
+                if (owner != 0L && owner != ZNet.GetUID())
+                {
+                    ZRoutedRpc.instance?.InvokeRoutedRPC(owner, zdo.m_uid, "RPC_Repair");
+                }
+                else
+                {
+                    ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, zdo.m_uid, "RPC_Repair");
+                }
                 ZRoutedRpc.instance?.InvokeRoutedRPC(ZRoutedRpc.Everybody, zdo.m_uid, "RPC_HealthChanged", max);
             }
             else

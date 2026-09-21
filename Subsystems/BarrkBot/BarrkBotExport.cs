@@ -7,6 +7,7 @@ using Wonderland.Core;
 using Wonderland.Core.Data;
 using Wonderland.Subsystems.DiscordNotify;
 using Wonderland.Subsystems.ItemFlow;
+using Wonderland.Subsystems.Security;
 
 namespace Wonderland.Subsystems.BarrkBot
 {
@@ -19,7 +20,9 @@ namespace Wonderland.Subsystems.BarrkBot
     /// (those are lifted out as guidance, never read as data). The file is written temp-then-rename so the
     /// sweep never parses a half-written file. Lifetime counters live in the registry beside the config
     /// (BarrkBotStats), so a restart does not blank the export: session_started_at (the process) and
-    /// tracking_since (the counters) are both declared so the reader knows which figures reset.
+    /// tracking_since (the counters) are both declared so the reader knows which figures reset. The
+    /// progression and enforcement blocks (0.10.x) are read fresh from the classifier and the synced config
+    /// on every write - hot-reloaded values and live world keys, never cached here.
     /// </summary>
     public static class BarrkBotExport
     {
@@ -95,7 +98,7 @@ namespace Wonderland.Subsystems.BarrkBot
             doc["server_notes"] =
                 "online false means the server was stopped cleanly and players_online is then 0 by definition. players_online is who " +
                 "is connected right now. known_accounts is how many distinct accounts have ever joined this world (the game's own " +
-                "history). bosses_defeated / bosses_remaining cover the five classic bosses and are the world's own progress, not " +
+                "history). bosses_defeated / bosses_remaining cover the seven bosses (Eikthyr to Fader) and are the world's own progress, not " +
                 "one player's kills; bosses_defeated_at only has dates for defeats seen since Wonderland 0.8.0.";
             doc["players"] = BuildPlayers(reg, stopping);
             doc["players_notes"] =
@@ -110,6 +113,12 @@ namespace Wonderland.Subsystems.BarrkBot
                 "actions; never sum, rank or compare them across mods or against a player. raids_blocked and spawns_culled are " +
                 "world-governor interventions. security_flags_total_alltime is server-side integrity flags - suspicions for the " +
                 "admin, never verdicts, and deliberately not broken down per player.";
+            // Both _notes are single strings: the BarrkBOT reader lifts a _notes key as attributed guidance
+            // only when it is a string (valheimModExports.js dissect()); an array renders as a plain collection.
+            doc["progression"] = BuildProgression(out List<string> progressionNotes);
+            doc["progression_notes"] = string.Join(" ", progressionNotes);
+            doc["enforcement"] = BuildEnforcement();
+            doc["enforcement_notes"] = string.Join(" ", EnforcementNotes());
             return doc;
         }
 
@@ -223,6 +232,207 @@ namespace Wonderland.Subsystems.BarrkBot
                 ["spawns_culled_alltime"] = reg.spawns_culled_count,
                 ["security_flags_total_alltime"] = reg.security_flags_count,
             };
+        }
+
+        // ---- progression + enforcement -------------------------------------------------------------
+
+
+        // The ledger keys as last read while ZoneSystem was alive, for the shutdown write (see _lastBosses).
+        private static List<string>? _lastBossKeys;
+
+        /// <summary>The ledger as one ordered walk of ItemTierClassifier.NextUnlock from the baseline: each
+        /// entry is the tier a boss unlocks, its global key and its display name, Swamp through DeepNorth.
+        /// One source for unlocked_by, next_* and bosses_defeated_keys, so the three cannot disagree.</summary>
+        private static List<(ItemTier Tier, string Key, string Boss)> Ledger()
+        {
+            var ledger = new List<(ItemTier, string, string)>();
+            for (ItemTier tier = ItemTier.BlackForest; tier < ItemTier.DeepNorth; tier++)
+            {
+                (string Key, string Boss)? next = ItemTierClassifier.NextUnlock(tier);
+                if (next == null) break;
+                ledger.Add((tier + 1, next.Value.Key, next.Value.Boss));
+            }
+            return ledger;
+        }
+
+        /// <summary>The world's progression ceiling and what it gates, read at build time: MaxAllowedTier
+        /// is hot-reloaded and the Auto ledger moves the moment a boss key lands. Item lists and counts
+        /// are the classifier's derived table (empty until the first tick ObjectDB exists after a start; a
+        /// ProgressionItemExemptions edit rewrites it within a second - enforcement itself sees the
+        /// edit at once). ItemTier.None is written as "Unrestricted" wherever a tier is a string.</summary>
+        private static Dictionary<string, object> BuildProgression(out List<string> notes)
+        {
+            notes = new List<string>();
+            string configured = WonderlandConfig.MaxAllowedTier?.Value ?? "Auto";
+            ItemTier effective = ItemTierClassifier.GetEffectiveMaxTier();
+            bool on = effective >= ItemTier.Meadows && effective <= ItemTier.DeepNorth;
+            string mode = !on ? "off" : configured.Trim().Equals("Auto", StringComparison.OrdinalIgnoreCase) ? "auto" : "fixed";
+            List<(ItemTier Tier, string Key, string Boss)> ledger = Ledger();
+
+            var tiers = new List<string>();
+            for (ItemTier t = ItemTier.Meadows; t <= ItemTier.DeepNorth; t++) tiers.Add(t.ToString());
+
+            // Ledger order, not alphabetical: Swamp before Mountain is the whole point of the map.
+            var unlockedBy = new Dictionary<string, object>();
+            foreach ((ItemTier tier, string key, string boss) in ledger) unlockedBy[tier.ToString()] = boss;
+
+            // Only Auto has a "next": a fixed ledger is lifted by the admin, not by a boss, and off gates nothing.
+            (ItemTier Tier, string Key, string Boss)? next = null;
+            if (mode == "auto")
+            {
+                foreach ((ItemTier tier, string key, string boss) in ledger)
+                {
+                    if (tier > effective) { next = (tier, key, boss); break; }
+                }
+            }
+
+            // Every defeated_* key the ledger knows, Eikthyr included even though it lifts nothing (the
+            // starter grant covers the Black Forest), read from the same world keys as bosses_defeated.
+            if (ZoneSystem.instance != null)
+            {
+                var set = new List<string>();
+                var keys = new List<string> { GlobalKeys.defeated_eikthyr.ToString() };
+                foreach ((ItemTier tier, string key, string boss) in ledger) keys.Add(key);
+                foreach (string key in keys)
+                {
+                    if (ZoneSystem.instance.GetGlobalKey(key)) set.Add(key);
+                }
+                _lastBossKeys = set;
+            }
+            List<string> bossKeys = _lastBossKeys ?? new List<string>();
+
+            bool tableBuilt = ItemTierClassifier.LastTierCounts.Count > 0;
+            var gatedTiers = new List<string>();
+            var gatedByTier = new Dictionary<string, object>();
+            int gatedCount = 0;
+            if (on)
+            {
+                for (ItemTier t = effective + 1; t <= ItemTier.DeepNorth; t++)
+                {
+                    int n = TierCount(t);
+                    gatedTiers.Add(t.ToString());
+                    gatedByTier[t.ToString()] = n;
+                    gatedCount += n;
+                }
+            }
+
+            var byTier = new Dictionary<string, object> { ["Unrestricted"] = TierCount(ItemTier.None) };
+            for (ItemTier t = ItemTier.Meadows; t <= ItemTier.DeepNorth; t++) byTier[t.ToString()] = TierCount(t);
+            byTier["Cheat"] = TierCount(ItemTier.Cheat);
+
+            notes.Add(
+                "tier is the progression ceiling in force on this world right now, never one player's progress: mode auto follows " +
+                "the world's own boss keys (Eikthyr is not on the ledger - the starter grant covers the Black Forest), fixed is " +
+                "pinned by the admin, off means no ceiling. Tiers come from the game's own recipe, smelter and station data at " +
+                "world start, not from item names: raw drops are unrestricted whatever biome they came from; only processed and " +
+                "crafted items carry a tier.");
+            notes.Add(
+                "gated means above tier: gated_tiers, gated_items_count and gated_items_by_tier are what a player would be " +
+                "flagged for right now. Every count here is items in the game's item database, not items in the world, not " +
+                "anyone's actions and not a ranking. next_boss, next_key and next_tier are empty strings when no boss lifts " +
+                "the ledger - DeepNorth reached, or mode fixed or off - which is a fact, not a missing reading.");
+            notes.Add(
+                "items_by_tier_count is the derived table; the item names are not in this file - tier_table_file has every " +
+                "item with its tier and reason as text, tier_json_file the same as JSON. Both are written on the first tick the " +
+                "game's item database exists after a start, and rewritten within a second of a ProgressionItemExemptions or " +
+                "BannedItemsList edit, which takes effect on enforcement at the same moment.");
+            if (!tableBuilt)
+            {
+                notes.Add("The tier table has not been built yet - it is derived on the first tick after start that the game's item database exists - so the counts are 0 until then.");
+            }
+            if (!on && !string.IsNullOrWhiteSpace(configured) && !configured.Trim().Equals("None", StringComparison.OrdinalIgnoreCase))
+            {
+                notes.Add($"MaxAllowedTier is '{configured}', which names no tier, so no progression ceiling is in force until it is corrected.");
+            }
+
+            return new Dictionary<string, object>
+            {
+                ["mode"] = mode,
+                ["configured"] = configured,
+                ["tier"] = on ? effective.ToString() : "",
+                ["tier_index"] = on ? (int)effective : 0,
+                ["tiers"] = tiers,
+                ["unlocked_by"] = unlockedBy,
+                // "" = nothing lifts the ledger (DeepNorth, fixed, off). Not null: the reader words a null as "not
+                // recorded yet", and this is a fact, not a missing reading.
+                ["next_boss"] = next?.Boss ?? "",
+                ["next_key"] = next?.Key ?? "",
+                ["next_tier"] = next?.Tier.ToString() ?? "",
+                ["bosses_defeated_keys"] = bossKeys,
+                ["gated_tiers"] = gatedTiers,
+                ["gated_items_count"] = gatedCount,
+                ["gated_items_by_tier"] = gatedByTier,
+                ["items_by_tier_count"] = byTier,
+                ["tier_table_file"] = ItemTierClassifier.AuditFilePath,
+                // The names themselves live beside this file (Wonderland/progression_tiers.json, not a
+                // barrkbot_* name so the scanner never sees two files): 160-260 gated names would push this
+                // whole block past the local provider's 6,000-character tool-result slice.
+                ["tier_json_file"] = ItemTierClassifier.TierJsonPath,
+            };
+        }
+
+        private static int TierCount(ItemTier tier)
+        {
+            return ItemTierClassifier.LastTierCounts.TryGetValue(tier, out int n) ? n : 0;
+        }
+
+        /// <summary>What the guards do when they find something, straight from the synced config at build
+        /// time (all hot-reloaded). Booleans only, plus the two admin lists - no counters: violations are
+        /// security_flags_total_alltime and are deliberately not broken down here.</summary>
+        private static Dictionary<string, object> BuildEnforcement()
+        {
+            return new Dictionary<string, object>
+            {
+                ["container_sweep"] = WonderlandConfig.ItemIntegritySweepEnabled?.Value == true,
+                ["container_sweep_removes"] = WonderlandConfig.ItemIntegritySweepCorrect?.Value == true,
+                ["equipment_guard"] = WonderlandConfig.EquipmentGuardEnabled?.Value == true,
+                ["equipment_guard_kicks"] = WonderlandConfig.EquipmentGuardKick?.Value == true,
+                ["quality_guard"] = WonderlandConfig.EquipmentGuardEnforceQuality?.Value == true,
+                ["admin_bypass"] = WonderlandConfig.EquipmentGuardAdminBypass?.Value == true,
+                ["vanilla_client"] = WonderlandConfig.ModEnforcementEnabled?.Value == true,
+                ["vanilla_client_kicks"] = WonderlandConfig.ModEnforcementKick?.Value == true,
+                ["vanilla_client_admin_bypass"] = WonderlandConfig.ModEnforcementAdminBypass?.Value == true,
+                ["strict_version"] = WonderlandConfig.ModEnforcementStrictVersion?.Value == true,
+                ["active_probe"] = WonderlandConfig.ModEnforcementActiveProbe?.Value == true,
+                ["routed_rpc"] = WonderlandConfig.ModEnforcementInspectRoutedRpc?.Value == true,
+                ["placement_guard"] = WonderlandConfig.ModEnforcementPlacementGuard?.Value == true,
+                ["max_plant_batch"] = WonderlandConfig.ModEnforcementMaxPlantBatch?.Value ?? 0,
+                ["banned_items"] = SplitList(WonderlandConfig.BannedItemsList?.Value),
+                ["pinned_items"] = SplitList(WonderlandConfig.ProgressionItemExemptions?.Value),
+            };
+        }
+
+        private static List<string> EnforcementNotes()
+        {
+            return new List<string>
+            {
+                "Each flag is the live setting: what enforcement does when it finds a gated, banned or implausible item, or a " +
+                "non-vanilla client. container_sweep checks player-built chests (a player's own bag is never networked to the " +
+                "server) and container_sweep_removes says whether a find is removed or only logged; equipment_guard watches what " +
+                "characters have equipped and equipment_guard_kicks says whether the wearer is disconnected or only logged; " +
+                "quality_guard flags gear upgraded past its legitimate maximum; admin_bypass exempts authenticated admins from " +
+                "every equipment, quality and progression check.",
+                "vanilla_client is the vanilla-only client check and vanilla_client_kicks says whether a modded client is " +
+                "disconnected or only logged; strict_version, active_probe, routed_rpc and placement_guard are its detectors, " +
+                "max_plant_batch the placements allowed in one half-second burst, vanilla_client_admin_bypass exempts admins.",
+                "banned_items are prohibited at every tier, in every mode (the game's own cheat prefabs are banned regardless of " +
+                "the list); pinned_items are the admin's overrides to the derived tier table - a bare prefab is freed at any tier, " +
+                "Prefab:Tier pins it. Nothing here is a player action, a count of violations or a ranking; violations are only " +
+                "security_flags_total_alltime, and those are suspicions, not verdicts.",
+            };
+        }
+
+        /// <summary>The config's comma/semicolon list as the classifier reads it (EnsureExemptionsLoaded):
+        /// split, trimmed, empties dropped, order kept.</summary>
+        private static List<string> SplitList(string? value)
+        {
+            var list = new List<string>();
+            foreach (string part in (value ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string trimmed = part.Trim();
+                if (trimmed.Length > 0) list.Add(trimmed);
+            }
+            return list;
         }
 
         private static SortedDictionary<string, long> Merge(SortedDictionary<string, long> a, SortedDictionary<string, long> b)

@@ -4,7 +4,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>Wonderland</AssemblyName>
     <RootNamespace>Wonderland</RootNamespace>
-    <Version>0.8.4</Version>
+    <Version>0.10.11</Version>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <!-- Every warning here is CS8600/2/3/4/18/25 - nullable-reference-type static analysis flagging
@@ -64,6 +64,15 @@
     </Reference>
     <Reference Include="Splatform">
       <HintPath>..\..\libs-Tools\1.0\server\Splatform.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!--
+      PlayFab SDK 2.215.250606 as shipped in the 1.0.15 dedicated server's Managed folder (md5
+      6a8caac06d3d5202a1f7d04f1198627f, decompiled at libs-Tools/1.0/DECOMPILED/PlayFab/). Only
+      Subsystems/WorldGovernor/CrossplayLobbyGuard.cs uses it (FindLobbiesResult / LobbySummary / EntityKey).
+    -->
+    <Reference Include="PlayFab">
+      <HintPath>..\..\libs-Tools\1.0\server\PlayFab.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <!--

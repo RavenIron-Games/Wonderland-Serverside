@@ -12,6 +12,7 @@ namespace Wonderland.Core.Data
     public static class ContainerRegistry
     {
         private static List<string> _prefabNames;
+        private static HashSet<int> _prefabHashes;
 
         public static List<string> PrefabNames
         {
@@ -25,9 +26,22 @@ namespace Wonderland.Core.Data
             }
         }
 
+        /// <summary>True when a ZDO's prefab hash is a container type - a set lookup, for the callers that
+        /// walk every ZDO in a sector ring (ResolveTemplate on each would be two native GetComponent calls
+        /// per wall, floor and rock in range).</summary>
+        public static bool IsContainerPrefab(int prefabHash)
+        {
+            if (_prefabHashes == null)
+            {
+                Discover();
+            }
+            return _prefabHashes != null && _prefabHashes.Contains(prefabHash);
+        }
+
         public static void Discover()
         {
             _prefabNames = new List<string>();
+            _prefabHashes = new HashSet<int>();
             if (ZNetScene.instance == null)
             {
                 return;
@@ -37,6 +51,7 @@ namespace Wonderland.Core.Data
                 if (prefab != null && ResolveTemplate(prefab) != null)
                 {
                     _prefabNames.Add(prefab.name);
+                    _prefabHashes.Add(prefab.name.GetStableHashCode());
                 }
             }
             WonderlandDebug.LogInfo($"[ContainerRegistry] discovered {_prefabNames.Count} container prefab types.");

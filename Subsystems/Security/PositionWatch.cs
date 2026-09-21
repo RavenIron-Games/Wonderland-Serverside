@@ -71,7 +71,7 @@ namespace Wonderland.Subsystems.Security
                         {
                             if (!isDead && !justRespawned && !IsLegitimateTransit(character, last.pos, pos))
                             {
-                                AuditLog.Flag("PositionWatch", name, $"moved {speed:F1} m/s over {elapsed:F1}s, exceeds ceiling {speedCeiling} m/s.", character.PlayerId);
+                                AuditLog.Flag("PositionWatch", character, $"moved {speed:F1} m/s over {elapsed:F1}s, exceeds ceiling {speedCeiling} m/s.");
                             }
                         }
                     }
@@ -80,15 +80,19 @@ namespace Wonderland.Subsystems.Security
 
                 if (WorldGenerator.instance != null && !Character.InInterior(pos) && pos.y < 2000f)
                 {
-                    float groundHeight = WorldGenerator.instance.GetHeight(pos.x, pos.z);
+                    // Over water the floor is the surface, not the seabed: the height map returns the seabed
+                    // (0 m in open ocean) while a swimmer or a deck-hand legitimately reports Y ~ 30. A ship
+                    // within 40 m exempts the sample outright - the deck of a longship, and a passenger thrown
+                    // about by waves, sit well above the surface with nothing under them the height map knows.
+                    float groundHeight = Mathf.Max(WorldGenerator.instance.GetHeight(pos.x, pos.z), ZoneSystem.c_WaterLevel);
                     float above = pos.y - groundHeight;
                     if (above <= heightTolerance)
                     {
                         _hasBeenGrounded.Add(uid);
                     }
-                    else if (_hasBeenGrounded.Contains(uid))
+                    else if (_hasBeenGrounded.Contains(uid) && !ShipAttachment.IsNearShip(pos))
                     {
-                        AuditLog.Flag("PositionWatch", name, $"reported Y {pos.y:F1} is {above:F1}m above expected ground height {groundHeight:F1} - possible fly/noclip.", character.PlayerId);
+                        AuditLog.Flag("PositionWatch", character, $"reported Y {pos.y:F1} is {above:F1}m above expected ground height {groundHeight:F1} - possible fly/noclip.");
                     }
 
                     // Nothing is flagged until the character has been seen on the ground at least once

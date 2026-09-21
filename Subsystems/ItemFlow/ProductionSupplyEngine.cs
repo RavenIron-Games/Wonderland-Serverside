@@ -85,15 +85,44 @@ namespace Wonderland.Subsystems.ItemFlow
         private const string Tag = "ProductionSupply";
         private const string KilnProduct = "Coal";
 
-        private static ZdoSpatialQuery.PrefabSetScanner _fireplaceScanner;
-        private static ZdoSpatialQuery.PrefabSetScanner _smelterScanner;
+        private static BudgetedSweep? _fireplaceSweep;
+        private static BudgetedSweep? _smelterSweep;
+        private static readonly Action<ZDO> VisitFireplace = ProcessFireplace;
+        private static readonly Action<ZDO> VisitSmelter = ProcessSmelter;
         /// <summary>Prefab hash of every tracked station -> its own display name ("$piece_charcoalkiln"), for player toasts.</summary>
         private static readonly Dictionary<int, string> _stations = new Dictionary<int, string>();
         private static readonly HashSet<int> _kilns = new HashSet<int>();
         private static HashSet<string> _kilnInputs;
         private static string _kilnInputsRaw;
         private static float _timer;
-        private static readonly List<ZDO> _buffer = new List<ZDO>();
+
+        // One station visit = one FindNear and at most one load per container, whatever the station asks for
+        // (fuel, then each ore it converts). Up to 0.10.10 TryConsumeOne did its own FindNear and loaded every
+        // container in range until it found the item - and for an ore the base does not have, that is every
+        // container, per conversion, per visit: a smelter (six conversions) beside 30 chests was ~180 inventory
+        // loads, 70-90 ms in one frame, every few seconds, with the sweep budget powerless because it is
+        // checked between visits. Now containers whose contents the vacuum's names cache knows at their
+        // current revision are not loaded at all when they lack the item, and the rest are loaded once.
+        private struct VisitContainer
+        {
+            public ZDO Zdo;
+            public GameObject Prefab;
+            public Container Template;
+            public bool IsShip;
+        }
+
+        private struct VisitInventory
+        {
+            public Inventory? Inventory;
+            public uint Revision;
+        }
+
+        private static readonly List<VisitContainer> _visitContainers = new List<VisitContainer>();
+        private static readonly Dictionary<ZDOID, VisitInventory> _visitInventories = new Dictionary<ZDOID, VisitInventory>();
+        private static readonly List<ZDO> _visitQueryBuffer = new List<ZDO>();
+        private static Vector3 _visitPosition;
+        private static float _visitRange = -1f;
+        private static readonly Dictionary<string, string?> _sharedNameByPrefab = new Dictionary<string, string?>();
         private static readonly List<ZDO> _nearBuffer = new List<ZDO>();
 
         public static void Initialize()
@@ -131,8 +160,8 @@ namespace Wonderland.Subsystems.ItemFlow
                     }
                 }
             }
-            _fireplaceScanner = new ZdoSpatialQuery.PrefabSetScanner(fireplaceNames);
-            _smelterScanner = new ZdoSpatialQuery.PrefabSetScanner(smelterNames);
+            _fireplaceSweep = new BudgetedSweep(fireplaceNames);
+            _smelterSweep = new BudgetedSweep(smelterNames);
             WonderlandDebug.LogInfo($"[ProductionSupplyEngine] tracking {fireplaceNames.Count} fireplace-family and {smelterNames.Count} smelter-family prefab types.");
 
             HashSet<string> allowed = KilnInputs();
@@ -142,41 +171,25 @@ namespace Wonderland.Subsystems.ItemFlow
 
         public static void OnUpdate(float dt)
         {
-            if (_fireplaceScanner == null || WonderlandConfig.ProductionSupplyEnabled?.Value != true)
+            if (_fireplaceSweep == null || _smelterSweep == null || WonderlandConfig.ProductionSupplyEnabled?.Value != true)
             {
                 return;
             }
 
             _timer += dt;
-            if (_timer < (WonderlandConfig.ProductionSupplyInterval?.Value ?? 3f))
+            if (_timer >= (WonderlandConfig.ProductionSupplyInterval?.Value ?? 3f))
             {
-                return;
+                _timer = 0f;
+                UpdateOwnershipRecords();
+                int budget = Mathf.Max(1, WonderlandConfig.ProductionSupplyBatchSize?.Value ?? 20);
+                _fireplaceSweep.Grant(budget);
+                _smelterSweep.Grant(budget);
             }
-            _timer = 0f;
-
-            UpdateOwnershipRecords();
-
-            int budget = Mathf.Max(1, WonderlandConfig.ProductionSupplyBatchSize?.Value ?? 20);
-
-            _buffer.Clear();
-            for (int i = 0; i < budget; i++)
-            {
-                _fireplaceScanner.Advance(_buffer);
-            }
-            foreach (ZDO zdo in _buffer)
-            {
-                ProcessFireplace(zdo);
-            }
-
-            _buffer.Clear();
-            for (int i = 0; i < budget; i++)
-            {
-                _smelterScanner.Advance(_buffer);
-            }
-            foreach (ZDO zdo in _buffer)
-            {
-                ProcessSmelter(zdo);
-            }
+            // Each interval's chunks are visited over the frames that follow, SweepBudgetMs per sweep per
+            // frame (0.10.9; one frame used to carry both batches).
+            float budgetMs = WonderlandConfig.SweepBudgetMs?.Value ?? 2f;
+            _fireplaceSweep.Run(budgetMs, VisitFireplace);
+            _smelterSweep.Run(budgetMs, VisitSmelter);
         }
 
         /// <summary>
@@ -493,6 +506,7 @@ namespace Wonderland.Subsystems.ItemFlow
             {
                 return;
             }
+            BeginVisit();
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
             Fireplace template = prefab != null ? prefab.GetComponent<Fireplace>() : null;
             if (template == null || template.m_infiniteFuel || template.m_fuelItem == null)
@@ -541,6 +555,7 @@ namespace Wonderland.Subsystems.ItemFlow
             {
                 return;
             }
+            BeginVisit();
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
             Smelter template = prefab != null ? prefab.GetComponent<Smelter>() : null;
             if (template == null)
@@ -637,22 +652,102 @@ namespace Wonderland.Subsystems.ItemFlow
         /// and removes exactly one, leaving the reserve floor untouched. Returns false (nothing
         /// consumed) if no source has enough spare stock.
         /// </summary>
+        /// <summary>Starts a station visit: the container list and the inventories of the previous visit are
+        /// dropped, so a station seen again next cycle is read afresh (a chest emptied or filled meanwhile).</summary>
+        private static void BeginVisit()
+        {
+            _visitRange = -1f;
+            _visitContainers.Clear();
+            _visitInventories.Clear();
+        }
+
+        /// <summary>The containers in supply range of a station position, found and classified once per visit
+        /// (prefab, template, hull-or-not are properties of the prefab): a second call from the same position
+        /// (fuel, then ore) reuses the list and the inventories already loaded. Every wall, floor and rock in
+        /// the ring is rejected by a hash-set lookup, not a GetComponent.</summary>
+        private static List<VisitContainer> VisitContainers(Vector3 position, float range)
+        {
+            if (_visitRange != range || (_visitPosition - position).sqrMagnitude > 0.01f)
+            {
+                _visitPosition = position;
+                _visitRange = range;
+                _visitContainers.Clear();
+                _visitInventories.Clear();
+                foreach (ZDO zdo in ZdoSpatialQuery.FindNear(position, range, _visitQueryBuffer))
+                {
+                    if (!ContainerRegistry.IsContainerPrefab(zdo.GetPrefab()))
+                    {
+                        continue;
+                    }
+                    GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
+                    Container template = ContainerRegistry.ResolveTemplate(prefab);
+                    if (template == null)
+                    {
+                        continue;
+                    }
+                    _visitContainers.Add(new VisitContainer { Zdo = zdo, Prefab = prefab, Template = template, IsShip = prefab.GetComponent<Ship>() != null });
+                }
+            }
+            return _visitContainers;
+        }
+
+        /// <summary>The shared (display) name of an item prefab - what the vacuum's names cache is keyed by -
+        /// resolved once per prefab name. Null when the prefab has no ItemDrop; the cache is then not consulted.</summary>
+        private static string? SharedNameOf(string prefabName)
+        {
+            if (_sharedNameByPrefab.TryGetValue(prefabName, out string? shared))
+            {
+                return shared;
+            }
+            GameObject prefab = ZNetScene.instance.GetPrefab(prefabName);
+            shared = prefab != null ? prefab.GetComponent<ItemDrop>()?.m_itemData?.m_shared?.m_name : null;
+            if (string.IsNullOrEmpty(shared))
+            {
+                shared = null; // the cache never records an empty name, so it must not be asked about one
+            }
+            _sharedNameByPrefab[prefabName] = shared;
+            return shared;
+        }
+
         private static bool TryConsumeOne(Vector3 position, string fuelOrOrePrefabName)
         {
             float range = WonderlandConfig.ProductionSupplyRange?.Value ?? 15f;
             int reserve = Mathf.Max(0, WonderlandConfig.ProductionSupplyReserve?.Value ?? 1);
+            string? sharedName = SharedNameOf(fuelOrOrePrefabName);
 
-            foreach (ZDO containerZdo in ZdoSpatialQuery.FindNear(position, range))
+            List<VisitContainer> containers = VisitContainers(position, range);
+            for (int i = 0; i < containers.Count; i++)
             {
-                GameObject prefab = ZNetScene.instance.GetPrefab(containerZdo.GetPrefab());
-                Container template = ContainerRegistry.ResolveTemplate(prefab);
-                if (template == null || ZdoInventoryIO.IsBusy(containerZdo))
+                ZDO containerZdo = containers[i].Zdo;
+                if (!containerZdo.IsValid() || ZdoInventoryIO.IsBusy(containerZdo))
                 {
                     continue;
                 }
+                // A ship's hold under a client that is simulating the hull: the take-one write races that
+                // client's revision stream and, discarded, would feed the station from an ore that is still in
+                // the hold - a duplicate (0.10.8 review). Same rule as the vacuum: only a hull nobody simulates.
+                if (containers[i].IsShip && ShipAttachment.IsSimulatedByClient(containerZdo))
+                {
+                    continue;
+                }
+                if (sharedName != null && VacuumEngine.KnownToHoldAtMost(containerZdo, sharedName, reserve))
+                {
+                    continue; // its contents at this exact revision are on record: none of this item, or only the reserve
+                }
 
-                (int width, int height) = ContainerRows.GetGridSize(prefab, template);
-                Inventory inventory = ZdoInventoryIO.Load(containerZdo, width, height);
+                // Loaded once per visit; a cached copy is trusted only at the revision it was read at - a visit
+                // is synchronous today, this keeps it honest if that ever changes.
+                if (!_visitInventories.TryGetValue(containerZdo.m_uid, out VisitInventory cached) || cached.Revision != containerZdo.DataRevision)
+                {
+                    (int width, int height) = ContainerRows.GetGridSize(containers[i].Prefab, containers[i].Template);
+                    cached = new VisitInventory { Inventory = ZdoInventoryIO.Load(containerZdo, width, height), Revision = containerZdo.DataRevision };
+                    _visitInventories[containerZdo.m_uid] = cached;
+                    if (cached.Inventory != null)
+                    {
+                        VacuumEngine.RememberContainerNames(containerZdo, cached.Inventory); // so the next visit can skip it unread
+                    }
+                }
+                Inventory? inventory = cached.Inventory;
                 if (inventory == null)
                 {
                     continue;
@@ -672,6 +767,8 @@ namespace Wonderland.Subsystems.ItemFlow
 
                 inventory.RemoveItem(found, 1);
                 ZdoInventoryIO.Save(containerZdo, inventory);
+                _visitInventories[containerZdo.m_uid] = new VisitInventory { Inventory = inventory, Revision = containerZdo.DataRevision };
+                VacuumEngine.RememberContainerNames(containerZdo, inventory); // keyed to the revision just written
                 ItemLedger.RecordTransfer(Tag, found.m_shared.m_name, 1);
                 return true;
             }

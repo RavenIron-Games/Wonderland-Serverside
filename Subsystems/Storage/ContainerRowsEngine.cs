@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Wonderland.Core;
@@ -26,10 +27,11 @@ namespace Wonderland.Subsystems.Storage
         /// </summary>
         private const float ReannounceInterval = 60f;
 
-        private static ZdoSpatialQuery.PrefabSetScanner? _scanner;
+        private static BudgetedSweep? _sweep;
+        private static readonly Action<ZDO> VisitDelegate = Visit;
+        private static readonly Action<ZDO> WriteBorrowedHullDelegate = WriteBorrowedHull;
         private static List<string> _eligible = new List<string>();
         private static float _timer;
-        private static readonly List<ZDO> _buffer = new List<ZDO>();
         private static int _anchoredTotal;
 
         private static bool _announced;
@@ -39,7 +41,7 @@ namespace Wonderland.Subsystems.Storage
         public static void Initialize()
         {
             ContainerRows.ResetCache();
-            _scanner = null;
+            _sweep = null;
             _anchoredTotal = 0;
             _announced = false;
             _unresolvedFor = 0f;
@@ -112,7 +114,7 @@ namespace Wonderland.Subsystems.Storage
             if (changed)
             {
                 _eligible = eligibleNames;
-                _scanner = new ZdoSpatialQuery.PrefabSetScanner(eligibleNames);
+                _sweep = new BudgetedSweep(eligibleNames);
             }
 
             string summary = $"[ContainerRows] x{ContainerRows.Multiplier:0.##} rows on {eligibleNames.Count} of {ContainerRegistry.PrefabNames.Count} container type(s) (player-buildable only, includes ship cargo): {string.Join(", ", logEntries)}";
@@ -146,29 +148,22 @@ namespace Wonderland.Subsystems.Storage
 
         public static void OnUpdate(float dt)
         {
-            if (!ContainerRows.IsEnabled || !Announce(dt) || _scanner == null)
+            HullBorrow.OnUpdate(); // first, every frame, whatever else is on: a borrowed hull is written and handed back the frame it arrives
+
+            if (!ContainerRows.IsEnabled || !Announce(dt) || _sweep == null)
             {
                 return;
             }
 
             _timer += dt;
-            if (_timer < (WonderlandConfig.ContainerRowsInterval?.Value ?? 5f))
+            if (_timer >= (WonderlandConfig.ContainerRowsInterval?.Value ?? 5f))
             {
-                return;
+                _timer = 0f;
+                _sweep.Grant(Mathf.Max(1, WonderlandConfig.ContainerRowsBatchSize?.Value ?? 25));
             }
-            _timer = 0f;
-
-            _buffer.Clear();
-            int budget = Mathf.Max(1, WonderlandConfig.ContainerRowsBatchSize?.Value ?? 25);
-            for (int i = 0; i < budget; i++)
-            {
-                _scanner.Advance(_buffer);
-            }
-
-            foreach (ZDO zdo in _buffer)
-            {
-                Visit(zdo);
-            }
+            // The interval's chunks are visited over the frames that follow, SweepBudgetMs at a time (0.10.9;
+            // one frame used to carry the whole batch - 120-140 ms on the live world).
+            _sweep.Run(WonderlandConfig.SweepBudgetMs?.Value ?? 2f, VisitDelegate);
         }
 
         private static void Visit(ZDO zdo)
@@ -180,6 +175,22 @@ namespace Wonderland.Subsystems.Storage
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
             Container template = ContainerRegistry.ResolveTemplate(prefab);
             if (template == null || !ContainerRows.IsEligible(prefab, template))
+            {
+                return;
+            }
+
+            // A ship's cargo is on the ship's own ZDO, and a floating hull's ZDO belongs to the client nearest
+            // it, which rewrites it every frame. A plain server write to it is lost (0.10.8: a moored Karve
+            // beside its crew was "parked" in the log and never grew a row on screen) and a forced one can
+            // drop the owner's in-flight cargo change. So a client-simulated hull is never written from here:
+            // when it needs its anchor the hull is BORROWED through vanilla's own open handshake (HullBorrow,
+            // 0.10.10 - 0.10.9 forced the write with a revision lead, which could drop the owner's in-flight
+            // deposit) and written by WriteBorrowedHull once the server owns it. A hull under sail is left
+            // alone until it stops; a hull nobody simulates is written directly, the same as a chest.
+            // (0.10.3 saw one moored Karve re-parked 78 times for the lost-write reason; the 0.10.3-0.10.7
+            // velocity-only check then never parked a moored ship again.)
+            bool ship = prefab.GetComponent<Ship>() != null;
+            if (ship && (ShipAttachment.IsUnderway(zdo) || HullBorrow.IsPending(zdo.m_uid)))
             {
                 return;
             }
@@ -202,9 +213,55 @@ namespace Wonderland.Subsystems.Storage
                 return;
             }
 
+            if (ship && ShipAttachment.IsSimulatedByClient(zdo))
+            {
+                // Judged on the server's copy (fresh to within a frame - the owner sends every one), but not
+                // written from it: ask the owner for the hull and write the copy that arrives with it. One
+                // request a minute per hull, granted or not (HullBorrow's cooldown).
+                if (HullBorrow.Request(zdo, WriteBorrowedHullDelegate))
+                {
+                    WonderlandDebug.LogInfo($"[ContainerRows] '{prefab.name}' at {zdo.GetPosition():F0}: needs its row parked - asked its owner {zdo.GetOwner()} for the hull.");
+                }
+                return;
+            }
+
             ZdoInventoryIO.Save(zdo, inventory);
             _anchoredTotal++;
             WonderlandDebug.LogInfo($"[ContainerRows] '{prefab.name}' at {zdo.GetPosition():F0}: parked {moved.m_shared.m_name} x{moved.m_stack} in row {height - 1} ({vanillaHeight} -> {height} rows). Anchors this session: {_anchoredTotal}");
+        }
+
+        /// <summary>The borrowed write: runs the frame the hull's owner has handed it over, on the copy that
+        /// came with the hand-over (its last word), and only if that copy still needs the anchor.</summary>
+        private static void WriteBorrowedHull(ZDO zdo)
+        {
+            if (!zdo.IsValid() || ZdoInventoryIO.IsBusy(zdo) || ZNetScene.instance == null)
+            {
+                return;
+            }
+            GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
+            Container template = ContainerRegistry.ResolveTemplate(prefab);
+            if (template == null || !ContainerRows.IsEligible(prefab, template))
+            {
+                return;
+            }
+            (int width, int height) = ContainerRows.GetGridSize(prefab, template);
+            (_, int vanillaHeight) = GridGrowth.GetVanillaSize(prefab.name, template);
+            if (height <= vanillaHeight)
+            {
+                return;
+            }
+            Inventory? inventory = ZdoInventoryIO.Load(zdo, width, height);
+            if (inventory == null || inventory.NrOfItems() == 0)
+            {
+                return;
+            }
+            if (!ContainerRows.EnsureAnchor(inventory, vanillaHeight, height, out ItemDrop.ItemData? moved) || moved == null)
+            {
+                return; // the owner's last word already had it
+            }
+            ZdoInventoryIO.Save(zdo, inventory);
+            _anchoredTotal++;
+            WonderlandDebug.LogInfo($"[ContainerRows] '{prefab.name}' at {zdo.GetPosition():F0}: parked {moved.m_shared.m_name} x{moved.m_stack} in row {height - 1} ({vanillaHeight} -> {height} rows) on a borrowed hull. Anchors this session: {_anchoredTotal}");
         }
     }
 }

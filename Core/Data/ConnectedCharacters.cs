@@ -46,6 +46,12 @@ namespace Wonderland.Core.Data
 
         /// <summary>"Alice (PC)" - the roster spelling shared by the heartbeat, Discord and the export.</summary>
         public string NameWithPlatform => PeerPlatform.WithLabel(Name, Peer);
+
+        /// <summary>The network socket hostname: bare Steam64 ID or PlayFab PlatformUserID (e.g. Steam_7656...).</summary>
+        public string SocketHost => Peer?.m_socket?.GetHostName() ?? "";
+
+        /// <summary>True if this connected peer is authenticated on the dedicated server's adminlist.txt.</summary>
+        public bool IsAdmin => !string.IsNullOrEmpty(SocketHost) && ZNet.instance != null && ZNet.instance.IsAdmin(SocketHost);
     }
 
     /// <summary>

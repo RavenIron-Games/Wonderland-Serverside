@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "generated_at": "2026-09-15T20:05:00Z",
-  "source": "Wonderland 0.8.4",
+  "source": "Wonderland 0.10.6",
   "intervals": {
     "write_seconds": 60
   },
@@ -21,22 +21,27 @@
       "Rohan"
     ],
     "peak_players_online": 5,
-    "wonderland_version": "0.8.4",
+    "wonderland_version": "0.10.6",
     "carry_weight_multiplier": 2.0,
     "stamina_regen_multiplier": 3.0,
     "bosses_defeated": [
-      "Eikthyr"
+      "Eikthyr",
+      "The Elder",
+      "Bonemass"
     ],
     "bosses_remaining": [
-      "The Elder",
-      "Bonemass",
       "Moder",
-      "Yagluth"
+      "Yagluth",
+      "The Queen",
+      "Fader"
     ],
-    "bosses_defeated_at": {},
+    "bosses_defeated_at": {
+      "Bonemass": "2026-09-15T19:40:03Z",
+      "The Elder": "2026-09-15T17:12:41Z"
+    },
     "stations_switched_off": 4
   },
-  "server_notes": "online false means the server was stopped cleanly and players_online is then 0 by definition. players_online is who is connected right now. known_accounts is how many distinct accounts have ever joined this world (the game's own history). bosses_defeated / bosses_remaining cover the five classic bosses and are the world's own progress, not one player's kills; bosses_defeated_at only has dates for defeats seen since Wonderland 0.8.0.",
+  "server_notes": "online false means the server was stopped cleanly and players_online is then 0 by definition. players_online is who is connected right now. known_accounts is how many distinct accounts have ever joined this world (the game's own history). bosses_defeated / bosses_remaining cover the seven bosses (Eikthyr to Fader) and are the world's own progress, not one player's kills; bosses_defeated_at only has dates for defeats seen since Wonderland 0.8.0.",
   "players": {
     "552612142": {
       "name": "Bb King",
@@ -99,5 +104,110 @@
     "spawns_culled_alltime": 57,
     "security_flags_total_alltime": 1
   },
-  "lifetime_notes": "Items moved by Wonderland's automation (fed to stations, vacuumed into chests, cached) - never a player's own actions; never sum, rank or compare them across mods or against a player. raids_blocked and spawns_culled are world-governor interventions. security_flags_total_alltime is server-side integrity flags - suspicions for the admin, never verdicts, and deliberately not broken down per player."
+  "lifetime_notes": "Items moved by Wonderland's automation (fed to stations, vacuumed into chests, cached) - never a player's own actions; never sum, rank or compare them across mods or against a player. raids_blocked and spawns_culled are world-governor interventions. security_flags_total_alltime is server-side integrity flags - suspicions for the admin, never verdicts, and deliberately not broken down per player.",
+  "progression": {
+    "mode": "auto",
+    "configured": "Auto",
+    "tier": "Mountain",
+    "tier_index": 4,
+    "tiers": [
+      "Meadows",
+      "BlackForest",
+      "Swamp",
+      "Mountain",
+      "Plains",
+      "Mistlands",
+      "Ashlands",
+      "DeepNorth"
+    ],
+    "unlocked_by": {
+      "Swamp": "The Elder",
+      "Mountain": "Bonemass",
+      "Plains": "Moder",
+      "Mistlands": "Yagluth",
+      "Ashlands": "The Queen",
+      "DeepNorth": "Fader"
+    },
+    "next_boss": "Moder",
+    "next_key": "defeated_dragon",
+    "next_tier": "Plains",
+    "bosses_defeated_keys": [
+      "defeated_eikthyr",
+      "defeated_gdking",
+      "defeated_bonemass"
+    ],
+    "gated_tiers": [
+      "Plains",
+      "Mistlands",
+      "Ashlands",
+      "DeepNorth"
+    ],
+    "gated_items_count": 160,
+    "gated_items_by_tier": {
+      "Plains": 35,
+      "Mistlands": 55,
+      "Ashlands": 70,
+      "DeepNorth": 0
+    },
+    "items_by_tier_count": {
+      "Unrestricted": 412,
+      "Meadows": 0,
+      "BlackForest": 47,
+      "Swamp": 42,
+      "Mountain": 30,
+      "Plains": 35,
+      "Mistlands": 55,
+      "Ashlands": 70,
+      "DeepNorth": 0,
+      "Cheat": 5
+    },
+    "tier_table_file": "/home/valheim/server/BepInEx/config/Wonderland.ProgressionTiers.txt",
+    "tier_json_file": "/home/valheim/server/BepInEx/config/Wonderland/progression_tiers.json"
+  },
+  "progression_notes": "tier is the progression ceiling in force on this world right now, never one player's progress: mode auto follows the world's own boss keys (Eikthyr is not on the ledger - the starter grant covers the Black Forest), fixed is pinned by the admin, off means no ceiling. Tiers come from the game's own recipe, smelter and station data at world start, not from item names: raw drops are unrestricted whatever biome they came from; only processed and crafted items carry a tier. gated means above tier: gated_tiers, gated_items_count and gated_items_by_tier are what a player would be flagged for right now. Every count here is items in the game's item database, not items in the world, not anyone's actions and not a ranking. next_boss, next_key and next_tier are empty strings when no boss lifts the ledger - DeepNorth reached, or mode fixed or off - which is a fact, not a missing reading. items_by_tier_count is the derived table; the item names are not in this file - tier_table_file has every item with its tier and reason as text, tier_json_file the same as JSON. Both are written on the first tick the game's item database exists after a start, and rewritten within a second of a ProgressionItemExemptions or BannedItemsList edit, which takes effect on enforcement at the same moment.",
+  "enforcement": {
+    "container_sweep": true,
+    "container_sweep_removes": false,
+    "equipment_guard": true,
+    "equipment_guard_kicks": false,
+    "quality_guard": true,
+    "admin_bypass": true,
+    "vanilla_client": true,
+    "vanilla_client_kicks": true,
+    "vanilla_client_admin_bypass": true,
+    "strict_version": true,
+    "active_probe": true,
+    "routed_rpc": true,
+    "placement_guard": true,
+    "max_plant_batch": 4,
+    "banned_items": [
+      "SwordCheat",
+      "SledgeCheat",
+      "ClubCheat",
+      "ArmorIronChestCheater",
+      "HelmetCheater"
+    ],
+    "pinned_items": [
+      "Feathers",
+      "BoneFragments",
+      "Resin",
+      "Flint",
+      "Wood",
+      "Stone",
+      "LeatherScraps",
+      "DeerHide",
+      "ArrowWood",
+      "ArrowFlint",
+      "ArrowFire",
+      "Raspberry",
+      "Blueberries",
+      "Mushroom",
+      "MushroomYellow",
+      "MushroomBlue",
+      "Dandelion",
+      "Honey",
+      "Thistle"
+    ]
+  },
+  "enforcement_notes": "Each flag is the live setting: what enforcement does when it finds a gated, banned or implausible item, or a non-vanilla client. container_sweep checks player-built chests (a player's own bag is never networked to the server) and container_sweep_removes says whether a find is removed or only logged; equipment_guard watches what characters have equipped and equipment_guard_kicks says whether the wearer is disconnected or only logged; quality_guard flags gear upgraded past its legitimate maximum; admin_bypass exempts authenticated admins from every equipment, quality and progression check. vanilla_client is the vanilla-only client check and vanilla_client_kicks says whether a modded client is disconnected or only logged; strict_version, active_probe, routed_rpc and placement_guard are its detectors, max_plant_batch the placements allowed in one half-second burst, vanilla_client_admin_bypass exempts admins. banned_items are prohibited at every tier, in every mode (the game's own cheat prefabs are banned regardless of the list); pinned_items are the admin's overrides to the derived tier table - a bare prefab is freed at any tier, Prefab:Tier pins it. Nothing here is a player action, a count of violations or a ranking; violations are only security_flags_total_alltime, and those are suspicions, not verdicts."
 }

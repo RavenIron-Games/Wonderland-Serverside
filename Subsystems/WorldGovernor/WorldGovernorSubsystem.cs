@@ -16,6 +16,7 @@ namespace Wonderland.Subsystems.WorldGovernor
             SubsystemRegistry.SafePatch(harmony, typeof(RaidGovernor));
             SubsystemRegistry.SafePatch(harmony, typeof(SpawnGovernor));
             SubsystemRegistry.SafePatch(harmony, typeof(PlayerCapGovernor));
+            SubsystemRegistry.SafePatch(harmony, typeof(CrossplayLobbyGuard));
             SubsystemRegistry.SafePatch(harmony, typeof(WorldRatesPatches));
             WorldRatesEngine.Initialize();
         }

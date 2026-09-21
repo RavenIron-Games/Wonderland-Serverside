@@ -54,6 +54,9 @@ namespace Wonderland.Core
 
         // Heartbeat
         public static ConfigEntry<bool>? HeartbeatEnabled;
+        public static ConfigEntry<bool>? TickProfilerEnabled;
+        public static ConfigEntry<float>? TickProfilerSlowFrameMs;
+        public static ConfigEntry<float>? SweepBudgetMs;
         public static ConfigEntry<float>? HeartbeatIntervalMinutes;
 
         // Item flow - production supply
@@ -99,6 +102,7 @@ namespace Wonderland.Core
 
         // World governor - player cap
         public static ConfigEntry<int>? MaxPlayerCount;
+        public static ConfigEntry<bool>? CrossplayLobbyGuardEnabled;
 
         // World governor - structure upkeep
         public static ConfigEntry<bool>? StructureUpkeepEnabled;
@@ -106,6 +110,8 @@ namespace Wonderland.Core
         public static ConfigEntry<float>? StructureUpkeepPlayerRadius;
         public static ConfigEntry<int>? StructureUpkeepSectorsPerSweep;
         public static ConfigEntry<bool>? StructureUpkeepPlayerBuiltOnly;
+        public static ConfigEntry<bool>? BoatUpkeepEnabled;
+        public static ConfigEntry<float>? BoatUpkeepInterval;
 
         // World governor - first spawn grant
         public static ConfigEntry<bool>? StarterGrantEnabled;
@@ -138,6 +144,31 @@ namespace Wonderland.Core
         public static ConfigEntry<float>? ItemIntegritySweepInterval;
         public static ConfigEntry<int>? ItemIntegritySweepBatchSize;
         public static ConfigEntry<bool>? ItemIntegritySweepCorrect;
+        public static ConfigEntry<bool>? SecurityLogEnabled;
+        public static ConfigEntry<string>? SecurityLogFileName;
+        public static ConfigEntry<bool>? EquipmentGuardEnabled;
+        public static ConfigEntry<float>? EquipmentGuardInterval;
+        public static ConfigEntry<string>? MaxAllowedTier;
+        public static ConfigEntry<string>? BannedItemsList;
+        public static ConfigEntry<bool>? EquipmentGuardEnforceQuality;
+        public static ConfigEntry<bool>? EquipmentGuardKick;
+        public static ConfigEntry<string>? EquipmentGuardKickMessage;
+        public static ConfigEntry<bool>? ForcePlayerMapPosition;
+        public static ConfigEntry<bool>? ForcePlayerMapPositionAdminBypass;
+        public static ConfigEntry<bool>? EquipmentGuardAdminBypass;
+        public static ConfigEntry<string>? ProgressionItemExemptions;
+
+        // Mod Enforcement
+        public static ConfigEntry<bool>? ModEnforcementEnabled;
+        public static ConfigEntry<bool>? ModEnforcementAdminBypass;
+        public static ConfigEntry<bool>? ModEnforcementKick;
+        public static ConfigEntry<string>? ModEnforcementKickMessage;
+        public static ConfigEntry<bool>? ModEnforcementStrictVersion;
+        public static ConfigEntry<bool>? ModEnforcementUseIncompatibleVersion;
+        public static ConfigEntry<bool>? ModEnforcementInspectRoutedRpc;
+        public static ConfigEntry<bool>? ModEnforcementActiveProbe;
+        public static ConfigEntry<bool>? ModEnforcementPlacementGuard;
+        public static ConfigEntry<int>? ModEnforcementMaxPlantBatch;
 
         // Discord Notify - lifecycle & world events
         public static ConfigEntry<float>? DiscordLifecycleInterval;
@@ -165,6 +196,9 @@ namespace Wonderland.Core
             VerboseLogging = BindLocal(config, "1 - General", "VerboseLogging", true, "Enable verbose diagnostic log messages, including every item transfer the mod makes. On by default: a suspected duplication is only diagnosable if the transfer that caused it was already being logged when it happened. Security findings and ledger rejections always log regardless of this setting.");
             HeartbeatEnabled = BindLocal(config, "1 - General", "HeartbeatEnabled", true, "Log one summary line periodically (see HeartbeatIntervalMinutes below) showing uptime and who's currently online, so an admin tailing the server log can confirm the mod is alive at a glance without needing VerboseLogging's full per-event detail. There's also a Discord version of this in section 14 (DiscordNotifyHeartbeat) - it shares this interval by default, or has its own via DiscordHeartbeatIntervalMinutes.");
             HeartbeatIntervalMinutes = BindLocal(config, "1 - General", "HeartbeatIntervalMinutes", 15f, "Minutes between heartbeat summary lines (the log one above, and the optional Discord one in section 14 unless DiscordHeartbeatIntervalMinutes gives it its own).");
+            TickProfilerEnabled = BindLocal(config, "1 - General", "TickProfilerEnabled", true, "Log a line whenever a server frame takes longer than TickProfilerSlowFrameMs (with how much of it was Wonderland, per subsystem, and the player count), plus a 5-minute summary of frame times. A slow server frame is a stall every connected client feels as other players and creatures skipping. Costs a few microseconds per frame. Read at use time; safe to edit while running.");
+            TickProfilerSlowFrameMs = BindLocal(config, "1 - General", "TickProfilerSlowFrameMs", 100f, "Frame length in milliseconds above which TickProfiler logs the frame (one line per second at most). A dedicated server normally runs 15-25 ms frames.");
+            SweepBudgetMs = config.Bind("1 - General", "SweepBudgetMs", 2f, new ConfigDescription("Milliseconds of any one server frame each world-wide sweep (the vacuum round-robin, container rows, sort, production supply) may use before it yields; whatever is left waits for the next frame. Each sweep still covers its BatchSize chunks per Interval, the work is just spread over the frames in between instead of landing in one. Up to 0.10.8 a sweep that reached a common chest type took 250-440 ms in a single frame. Read at use time; safe to edit while running.", new AcceptableValueRange<float>(0.25f, 50f)));
 
             VacuumEnabled = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumEnabled", true, "Enable containers auto-vacuuming matching ground items nearby. Match-required: only tops up an item type a container already holds.");
             VacuumInterval = BindSynced(config, configSync, "2 - Vacuum & Auto-Harvest", "VacuumInterval", 2f, "Seconds between vacuum passes - each pass checks the ground around every connected player (VacuumNearPlayersRadius) and advances the world-wide round-robin by VacuumBatchSize.", 0.5f, 30f);
@@ -237,12 +271,15 @@ namespace Wonderland.Core
             NightSpawnBlockedCreatures = BindSynced(config, configSync, "7 - Night Spawns", "NightSpawnBlockedCreatures", "Draugr,Draugr_Elite,Wraith,Abomination,Deathsquito,Blob,BlobElite,StoneGolem,Seeker,SeekerBrood,SeekerBrute,SeekerQueen,Charred_Archer,Charred_Archer_Fader,Charred_Mage,Charred_Melee,Charred_Melee_Dyrnwyn,Charred_Melee_Fader,Charred_Twitcher,Charred_Twitcher_Summoned,Fenring,Fenring_Cultist,Fenring_Cultist_Hildir,Fenring_Cultist_Hildir_nochest", "Which creatures get destroyed if they spawn at night (comma-separated, exact in-game names - typos just mean that entry silently does nothing). Covers the Draugr/Wraith/Abomination/Blob/Stone Golem family by default, plus the full Seeker family (Mistlands), the full Charred family (AshLands), and the full Fenring family (Hildir's camps) - add or remove names freely. Remember: the biome list above also has to include wherever a creature actually spawns, or blocking it here won't do anything.");
 
             MaxPlayerCount = BindSyncedInt(config, configSync, "8 - Player Cap", "MaxPlayerCount", 10, "Maximum concurrent connected players. Vanilla hardcodes 10; this can raise or lower it. On a crossplay (-crossplay) server, PlayFab's own lobby registration is separately hardcoded to 10 and cannot be raised by this or any mod - Steam-direct joins can exceed 10, but PlayFab/Xbox joins past the 10th are still rejected by PlayFab itself. A startup log warning appears if this is set above 10 while crossplay is active.", 1, 256);
+            CrossplayLobbyGuardEnabled = BindLocal(config, "8 - Player Cap", "CrossplayLobbyGuardEnabled", true, "Crossplay (-crossplay) servers only. Vanilla registers the server as a PlayFab lobby and activates it (makes it findable by join code, name, IP and the server list) only after a join-code uniqueness check; when that check finds an ownerless lobby left behind by the previous run - the join code is the same every boot - vanilla throws, never activates, and nobody can join until a restart. With this on, that answer takes vanilla's own regenerate-join-code path instead and any other error in the check is retried. Does nothing on a Steam-only server. Read at use time; safe to edit while running.");
 
-            StructureUpkeepEnabled = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepEnabled", true, "Periodically reset building piece health back to max, preventing decay.");
+            StructureUpkeepEnabled = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepEnabled", true, "Periodically reset building piece health back to max, preventing decay. Boats have their own loop and rate in section 18.");
             StructureUpkeepInterval = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepInterval", 60f, "Seconds between structure upkeep sweep batches.", 5f, 600f);
             StructureUpkeepPlayerRadius = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepPlayerRadius", 128f, "Metres around each connected player checked for damaged pieces every sweep. Decay only ever happens inside a client's active area (a 1.5-zone box, up to ~128m from the player), so this pass is what actually keeps up with wear; the default covers that whole envelope.", 16f, 512f);
             StructureUpkeepSectorsPerSweep = BindSyncedInt(config, configSync, "9 - Structure Upkeep", "StructureUpkeepSectorsPerSweep", 512, "How many populated 64m sectors the background full-map sweep walks per sweep interval. This is the slow backstop for damage that predates the feature or happened in an unvisited zone; the per-player pass above does the real-time work. (Replaces StructureUpkeepBatchSize, whose unit was different.)", 1, 20000);
             StructureUpkeepPlayerBuiltOnly = BindSynced(config, configSync, "9 - Structure Upkeep", "StructureUpkeepPlayerBuiltOnly", true, "Only repair pieces a player placed (the piece has a creator). World-generated ruins are spawned deliberately pre-damaged; turning this off will gradually restore every abandoned village and dungeon on the map to pristine.");
+            BoatUpkeepEnabled = BindSynced(config, configSync, "18 - Boat Upkeep", "BoatUpkeepEnabled", true, "Repair damaged boats (Raft, Karve, Longship, Drakkar) to full health on their own schedule, independent of structure upkeep. A boat someone is aboard or beside is repaired through that player's own game (vanilla's repair message, no hammer, no effects); a boat nobody is near is written by the server. Read at use time; safe to edit while running.");
+            BoatUpkeepInterval = BindSynced(config, configSync, "18 - Boat Upkeep", "BoatUpkeepInterval", 60f, "Seconds between boat repair passes. Each pass looks around every connected player (StructureUpkeepPlayerRadius) and walks the world's hulls in the background within the frame budget. A boat under attack is repaired to full on each pass, so a short interval makes it hard to sink.", 5f, 600f);
 
             StarterGrantEnabled = BindSynced(config, configSync, "10 - Starter Grant", "StarterGrantEnabled", true, "Grant a one-time starter kit and boat the first time a character is seen in this world. Recorded as a world global key per character (wonderland_starter_<playerID>), saved with the world.");
             StarterKitItems = BindSynced(config, configSync, "10 - Starter Grant", "StarterKitItems", "Wood:50,Stone:10,Flint:5,AxeFlint:1,KnifeFlint:1,SpearFlint:1,PickaxeAntler:1", "Comma-separated PrefabName:Amount pairs spawned as ground items at spawn.");
@@ -272,6 +309,30 @@ namespace Wonderland.Core
             ItemIntegritySweepInterval = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepInterval", 30f, "Seconds between integrity sweep batches.", 5f, 600f);
             ItemIntegritySweepBatchSize = BindSyncedInt(config, configSync, "12 - Security", "ItemIntegritySweepBatchSize", 25, "How many container ZDOs to advance the scanner by per sweep.", 1, 500);
             ItemIntegritySweepCorrect = BindSynced(config, configSync, "12 - Security", "ItemIntegritySweepCorrect", false, "If true, remove implausible items outright instead of only logging them.");
+            SecurityLogEnabled = BindLocal(config, "12 - Security", "SecurityLogEnabled", true, "Write security audit flags to a separate dedicated log file in addition to console/LogOutput.");
+            SecurityLogFileName = BindLocal(config, "12 - Security", "SecurityLogFileName", "logs/wonderland_security.log", "Relative path from BepInEx root for the dedicated security log file.");
+            EquipmentGuardEnabled = BindSynced(config, configSync, "12 - Security", "EquipmentGuardEnabled", true, "Periodically scan connected players for equipped banned, cheat, or over-tier items, or impossible quality.");
+            EquipmentGuardInterval = BindSynced(config, configSync, "12 - Security", "EquipmentGuardInterval", 5f, "Seconds between equipment guard scans.", 1f, 60f);
+            MaxAllowedTier = BindSynced(config, configSync, "12 - Security", "MaxAllowedTier", "Auto", "Maximum allowed item progression tier on the server. 'Auto' (default) dynamically tracks world boss defeats (starts at BlackForest, unlocks Swamp on The Elder, Mountain on Bonemass, Plains on Moder, Mistlands on Yagluth, Ashlands on The Queen, DeepNorth on Fader). Or set to a fixed tier override: None, Meadows, BlackForest, Swamp, Mountain, Plains, Mistlands, Ashlands. 'None' disables progression checking. Item tiers are derived from the game's recipe/smelter/station data at world start; the resulting table is written to BepInEx/config/Wonderland.ProgressionTiers.txt.");
+            BannedItemsList = BindSynced(config, configSync, "12 - Security", "BannedItemsList", "SwordCheat,SledgeCheat,ClubCheat,ArmorIronChestCheater,HelmetCheater", "Comma-separated list of item prefab names that are strictly banned from being equipped or stored.");
+            EquipmentGuardEnforceQuality = BindSynced(config, configSync, "12 - Security", "EquipmentGuardEnforceQuality", true, "Flag items whose equipped quality exceeds the item's maximum legitimate quality. Items whose recipe uses an upgrader resource (Valheim 1.0's upgrader crafting stations) are exempt, since they legitimately exceed the base max quality.");
+            EquipmentGuardKick = BindSynced(config, configSync, "12 - Security", "EquipmentGuardKick", false, "If true, automatically kicks players who equip banned items or items exceeding MaxAllowedTier. If false, logs the violation only.");
+            EquipmentGuardKickMessage = BindSynced(config, configSync, "12 - Security", "EquipmentGuardKickMessage", "Security violation: Unauthorized or high-tier equipment detected", "Kick message displayed to players disconnected for equipment security violations.");
+            EquipmentGuardAdminBypass = BindSynced(config, configSync, "12 - Security", "EquipmentGuardAdminBypass", true, "If true, authenticated server admins on adminlist.txt completely bypass all equipment, quality, and progression tier checks.");
+            ProgressionItemExemptions = BindSynced(config, configSync, "12 - Security", "ProgressionItemExemptions", "Feathers,BoneFragments,Resin,Flint,Wood,Stone,LeatherScraps,DeerHide,ArrowWood,ArrowFlint,ArrowFire,Raspberry,Blueberries,Mushroom,MushroomYellow,MushroomBlue,Dandelion,Honey,Thistle", "Comma-separated prefab names that override the derived tier table. 'Prefab' = unrestricted at any tier; 'Prefab:Tier' = pinned to that tier, raising or lowering whatever was derived (e.g. Feathers, CustomItem:Swamp). Hot-reloaded. Check BepInEx/config/Wonderland.ProgressionTiers.txt to see what was derived for each item before pinning.");
+            ForcePlayerMapPosition = BindSynced(config, configSync, "12 - Security", "ForcePlayerMapPosition", false, "Force all players to be publicly visible on the map and minimap for all players, overriding the client-side 'Visible to other players' checkbox.");
+            ForcePlayerMapPositionAdminBypass = BindSynced(config, configSync, "12 - Security", "ForcePlayerMapPositionAdminBypass", true, "If true, authenticated server admins can toggle off their map visibility to spectate in stealth.");
+
+            ModEnforcementEnabled = BindSynced(config, configSync, "12 - Security", "ModEnforcementEnabled", true, "Enforce that connecting clients are vanilla Valheim clients. Non-vanilla clients are flagged and kicked.");
+            ModEnforcementAdminBypass = BindSynced(config, configSync, "12 - Security", "ModEnforcementAdminBypass", true, "Bypass mod enforcement for authenticated server admins based solely on the server passing the adminlist check.");
+            ModEnforcementKick = BindSynced(config, configSync, "12 - Security", "ModEnforcementKick", true, "If true, automatically disconnects/kicks non-vanilla clients. If false, logs audit flags only.");
+            ModEnforcementKickMessage = BindSynced(config, configSync, "12 - Security", "ModEnforcementKickMessage", "Vanilla enforcement enabled, connect fairly with vanilla only client", "Disconnect/kick message clearly displayed to kicked clients.");
+            ModEnforcementStrictVersion = BindSynced(config, configSync, "12 - Security", "ModEnforcementStrictVersion", true, "Enforce strict vanilla regex validation on client version strings during PeerInfo handshake.");
+            ModEnforcementUseIncompatibleVersion = BindSynced(config, configSync, "12 - Security", "ModEnforcementUseIncompatibleVersion", true, "If true (default), disconnected clients receive 'Failed to connect: Incompatible version' (ErrorVersion), signaling that their modded client does not match this server. If false, sends 'Kicked' (ErrorKicked).");
+            ModEnforcementInspectRoutedRpc = BindSynced(config, configSync, "12 - Security", "ModEnforcementInspectRoutedRpc", true, "Intercept in-game routed RPCs and kick clients sending non-vanilla RPC method hashes.");
+            ModEnforcementActiveProbe = BindSynced(config, configSync, "12 - Security", "ModEnforcementActiveProbe", true, "Actively probe connecting clients with known mod framework handshake challenges (ServerSync, Jotunn, ValheimPlus, AzuAntiCheat) to detect modded clients.");
+            ModEnforcementPlacementGuard = BindSynced(config, configSync, "12 - Security", "ModEnforcementPlacementGuard", true, "Enforce physical placement rate limits on incoming entity creation to detect client-side auto-planting and bulk placement mods (e.g. PlantEasily).");
+            ModEnforcementMaxPlantBatch = BindSyncedInt(config, configSync, "12 - Security", "ModEnforcementMaxPlantBatch", 4, "Maximum crop/plant placements permitted within a 0.5-second burst window before triggering mod enforcement kick. Vanilla cooldown is 0.4s per piece.", 2, 20);
 
             DiscordLifecycleInterval = BindLocal(config, "14 - Discord Notify", "DiscordLifecycleInterval", 3f, "Seconds between the sweep that detects player deaths.");
             DiscordNotifyDeaths = BindLocal(config, "14 - Discord Notify", "DiscordNotifyDeaths", true, "Post in Discord whenever a connected player dies.");

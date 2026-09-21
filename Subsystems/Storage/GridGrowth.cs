@@ -168,6 +168,13 @@ namespace Wonderland.Subsystems.Storage
                 {
                     continue;
                 }
+                // Overflow moved into a ship's hold that a client is simulating would be a write the owner's
+                // revision stream discards - and the overflow is gone from the source. Ships only take it
+                // when nobody is simulating them (0.10.8 review; same rule as the vacuum).
+                if (candidatePrefab.GetComponent<Ship>() != null && ShipAttachment.IsSimulatedByClient(candidate))
+                {
+                    continue;
+                }
                 prefab = candidatePrefab;
                 template = candidateTemplate;
                 return candidate;

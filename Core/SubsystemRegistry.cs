@@ -69,13 +69,14 @@ namespace Wonderland.Core
                 if (!subsystem.IsEnabled) continue;
                 try
                 {
-                    subsystem.OnUpdate();
+                    TickProfiler.Measure(subsystem);
                 }
                 catch (Exception ex)
                 {
                     WonderlandDebug.LogError($"Error in subsystem '{subsystem.Name}' OnUpdate: {ex.Message}");
                 }
             }
+            TickProfiler.EndFrame(UnityEngine.Time.unscaledDeltaTime, ZNet.instance != null ? ZNet.instance.GetNrOfPlayers() : 0);
         }
 
         public void ShutdownAll()

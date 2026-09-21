@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Wonderland.Core;
@@ -15,40 +16,30 @@ namespace Wonderland.Subsystems.ItemFlow
     /// </summary>
     public static class SortEngine
     {
-        private static ZdoSpatialQuery.PrefabSetScanner _scanner;
+        private static BudgetedSweep? _sweep;
         private static float _timer;
-        private static readonly List<ZDO> _buffer = new List<ZDO>();
+        private static readonly Action<ZDO> VisitDelegate = ConsolidateStacks;
 
         public static void Initialize()
         {
-            _scanner = new ZdoSpatialQuery.PrefabSetScanner(ContainerRegistry.PrefabNames);
+            _sweep = new BudgetedSweep(ContainerRegistry.PrefabNames);
         }
 
         public static void OnUpdate(float dt)
         {
-            if (_scanner == null || WonderlandConfig.SortEnabled?.Value != true)
+            if (_sweep == null || WonderlandConfig.SortEnabled?.Value != true)
             {
                 return;
             }
 
             _timer += dt;
-            if (_timer < (WonderlandConfig.SortInterval?.Value ?? 30f))
+            if (_timer >= (WonderlandConfig.SortInterval?.Value ?? 30f))
             {
-                return;
+                _timer = 0f;
+                _sweep.Grant(Mathf.Max(1, WonderlandConfig.SortBatchSize?.Value ?? 10));
             }
-            _timer = 0f;
-
-            _buffer.Clear();
-            int budget = Mathf.Max(1, WonderlandConfig.SortBatchSize?.Value ?? 10);
-            for (int i = 0; i < budget; i++)
-            {
-                _scanner.Advance(_buffer);
-            }
-
-            foreach (ZDO zdo in _buffer)
-            {
-                ConsolidateStacks(zdo);
-            }
+            // The interval's chunks are visited over the frames that follow, SweepBudgetMs at a time (0.10.9).
+            _sweep.Run(WonderlandConfig.SweepBudgetMs?.Value ?? 2f, VisitDelegate);
         }
 
         private static void ConsolidateStacks(ZDO zdo)
@@ -62,6 +53,11 @@ namespace Wonderland.Subsystems.ItemFlow
             if (template == null)
             {
                 return;
+            }
+
+            if (prefab.GetComponent<Ship>() != null && ShipAttachment.IsSimulatedByClient(zdo))
+            {
+                return; // a merge is cosmetic - not worth a write that races the hull's owner (see ShipAttachment.IsSimulatedByClient)
             }
 
             (int width, int height) = ContainerRows.GetGridSize(prefab, template);

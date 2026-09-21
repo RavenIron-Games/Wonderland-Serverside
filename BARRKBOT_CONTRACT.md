@@ -51,9 +51,11 @@ files claiming the same facts). BarrkBOT does **not** read it.
 
 ## Field names currently depended on
 
-Top level: `schema_version` (3), `generated_at`, `source`, `intervals.write_seconds` (the effective value, floor 10),
-`session_started_at`, `tracking_since`, `export_notes`, `server`, `server_notes`, `players`, `players_notes`,
-`players_not_achievements` (`deaths_alltime`, `sessions_alltime`), `lifetime`, `lifetime_notes`.
+Top level: `schema_version` (3 - the 0.10.5 blocks below are additive, so it did not move), `generated_at`, `source`,
+`intervals.write_seconds` (the effective value, floor 10), `session_started_at`, `tracking_since`, `export_notes`, `server`,
+`server_notes`, `players`, `players_notes`, `players_not_achievements` (`deaths_alltime`, `sessions_alltime`), `lifetime`,
+`lifetime_notes`, `progression`, `progression_notes`, `enforcement`, `enforcement_notes` (in that order - the two new blocks
+come last on purpose, see the reader-side cap below).
 
 `server` (live): `name` (the dedicated server's `-name` string, "" if unreadable - a cross-check for a reader that
 sweeps more than one server root), `world_name`, `online`, `world_day` (integer or null), `known_accounts`,
@@ -74,12 +76,58 @@ row, which would draw a "same name, different scope" note): `production_supply_i
 `vacuum_items_moved_by_item`, `item_cache_items_stored_alltime`, `item_cache_items_returned_alltime`,
 `starter_kit_items_granted_alltime`, `raids_blocked_alltime`, `spawns_culled_alltime`, `security_flags_total_alltime`.
 
-## Known reader-side quirk (BarrkBOT, not this mod)
+`progression` (live: the ceiling in force, read from the hot-reloaded config and the world's global keys at every write,
+never cached; the website binds to these exact names): `mode` (`auto` | `fixed` | `off`, lowercase - from `MaxAllowedTier`:
+`Auto` -> `auto`, `None` / blank / a string that names no tier -> `off`, a tier name -> `fixed`), `configured` (the raw
+`MaxAllowedTier` string), `tier` (the tier name in force, `""` when off), `tier_index` (Meadows 1 ... DeepNorth 8, 0 when off),
+`tiers` (the eight names in ledger order), `unlocked_by` (tier -> boss display name, Swamp through DeepNorth, ledger order -
+not alphabetical, unlike the item maps), `next_boss` / `next_key` / `next_tier` (the boss, its `defeated_*` key and the tier
+its defeat unlocks; **`""`** when no boss lifts the ledger - DeepNorth reached, or mode `fixed` or `off`. Not null: the
+reader words a nested null as "not measured yet", and this is a fact), `bosses_defeated_keys` (every `defeated_*` global key that is set, Eikthyr
+included although it lifts nothing, ledger order), `gated_tiers` (tiers above `tier`, `[]` when off), `gated_items_count`,
+`gated_items_by_tier` (gated tier -> count, ledger order), `items_by_tier_count` (`Unrestricted`, `Meadows` ... `DeepNorth`,
+`Cheat` - every key always present, 0 where empty), `tier_table_file` (the classifier's on-disk table, one line per item with
+its reason: `BepInEx/config/Wonderland.ProgressionTiers.txt`), `tier_json_file` (the same table as JSON for the website:
+`BepInEx/config/Wonderland/progression_tiers.json` - `{generated_at, source, ledger, tiers, seeds, station_floors,
+name_floors, items: {prefab: {tier, reason}}}`, `tier` is `Unrestricted` or a tier name; deliberately not a `barrkbot_*`
+name so the scanner never sees two files claiming the same facts). **Item names are not in this file**: 160-260 gated
+names would push the block past the local provider's 6,000-character slice (quirk below), so a consumer that wants the
+list reads `tier_json_file`. Counts are the classifier's derived table, built on the first tick after a start that `ObjectDB` exists
+(it is often not there yet at the world-ready hook) and rewritten within a second of a `ProgressionItemExemptions` /
+`BannedItemsList` edit; until the first build they are 0 and `progression_notes` says so. Nothing in the block is a player's action or a ranking; `ItemTier.None` is always
+written as the string `Unrestricted`.
 
-`valheimModExports.js` `cumulativeCollections` only recognises a collection as cumulative when its name starts with
-`lifetime` or its own top-level keys end in `_alltime`; a per-player map keyed by ids is not inspected, so the
-reader's generated TWO TIME BASES note tells the model that `players.*_alltime` reset on restart, contradicting
-`export_notes`. Reported to the BarrkBOT maintainer (2026-09-15); the fix belongs in the reader.
+`enforcement` (live config, all hot-reloaded, read at every write - what the guards DO when they find something, never
+how often they did): `container_sweep`, `container_sweep_removes` (true = a gated / banned / implausible item is removed from
+the chest, false = logged only), `equipment_guard`, `equipment_guard_kicks` (true = the wearer is disconnected, false = logged
+only), `quality_guard`, `admin_bypass`, `vanilla_client`, `vanilla_client_kicks`, `vanilla_client_admin_bypass`,
+`strict_version`, `active_probe`, `routed_rpc`, `placement_guard` (all booleans), `max_plant_batch` (integer), `banned_items`
+and `pinned_items` (the `BannedItemsList` / `ProgressionItemExemptions` strings split on `,` and `;`, trimmed, config order;
+a pinned entry is either `Prefab` or `Prefab:Tier`, verbatim). No per-guard counters: violations stay in
+`lifetime.security_flags_total_alltime`, on purpose.
+
+`progression_notes` and `enforcement_notes` are single strings like every other `_notes` key (the reader lifts only string
+`_notes` as attributed guidance - quirk below). Same voice, same rules: guidance, never data.
+
+## Known reader-side quirks (BarrkBOT, not this mod)
+
+- `valheimModExports.js` `cumulativeCollections` only recognises a collection as cumulative when its name starts with
+  `lifetime` or its own top-level keys end in `_alltime`; a per-player map keyed by ids is not inspected, so the
+  reader's generated TWO TIME BASES note tells the model that `players.*_alltime` reset on restart, contradicting
+  `export_notes`. Reported to the BarrkBOT maintainer (2026-09-15); the fix belongs in the reader.
+- `dissect()` lifts a `_notes` key as attributed guidance only when its value is a **string** (`typeof v === 'string'`);
+  an array renders as a summary collection (`kind: "summary"`) that the model reads but not as "From the mod author"
+  guidance. This is why every `_notes` key, the two new ones included, is a single string. Verified through the probe, 6.1.20.
+- A nested null is always worded as "NOT RECORDED - say the figure has not been measured yet" (`nullFields`) and there is no
+  per-field meaning table entry for ours - which is why `next_boss` / `next_key` / `next_tier` are `""` rather than null when
+  nothing lifts the ledger.
+- **The local provider's tool-result cap is 6,000 characters of compact JSON** (`chat.js` `LOCAL_TOOL_RESULT_CHARS`,
+  hard-sliced after the reader has squeezed the player rows to one). The live file measured 6,844 through the reader
+  before these blocks existed (13 players, the `vacuum_items_moved_by_item` map), so the tail of `lifetime` was already
+  being cut; `progression` + `enforcement` + their notes add roughly 4,200 characters (the gated item names, ~18 each,
+  were moved out to `tier_json_file` for exactly this reason). The two blocks are written **after** `lifetime_notes`, so
+  nothing the bot already answered moves; on the local provider the model may still not see them until the cap changes;
+  the website reads the whole file and is unaffected. Measured 2026-09-20 with `barrkbot-render-probe.mjs` (6.1.20).
 
 ## Consumers
 

@@ -49,6 +49,11 @@ namespace Wonderland.Subsystems.Security
 
             foreach (ConnectedCharacter character in ConnectedCharacters.All())
             {
+                if (AdminRegistry.IsAdmin(character))
+                {
+                    continue;
+                }
+
                 long key = character.PlayerId != 0L ? character.PlayerId : character.Zdo.m_uid.GetHashCode();
                 string name = character.Name;
 
@@ -57,7 +62,7 @@ namespace Wonderland.Subsystems.Security
                     float maxHealth = character.Zdo.GetFloat(ZDOVars.s_maxHealth, 0f);
                     if (maxHealth > maxHealthCeiling + 0.01f && ShouldFlag(_lastFlaggedMaxHealth, key, maxHealth))
                     {
-                        AuditLog.Flag("VitalsGuard", name, $"max HP {maxHealth:F0} exceeds configured ceiling {maxHealthCeiling:F0} - flagged, not corrected (the owning client rewrites max HP from food every second; see VitalsGuard.cs).", character.PlayerId);
+                        AuditLog.Flag("VitalsGuard", character, $"max HP {maxHealth:F0} exceeds configured ceiling {maxHealthCeiling:F0} - flagged, not corrected (the owning client rewrites max HP from food every second; see VitalsGuard.cs).");
                     }
                 }
 
@@ -66,7 +71,7 @@ namespace Wonderland.Subsystems.Security
                     float stamina = character.Zdo.GetFloat(ZDOVars.s_stamina, 0f);
                     if (stamina > staminaCeiling && ShouldFlag(_lastFlaggedStamina, key, stamina))
                     {
-                        AuditLog.Flag("VitalsGuard", name, $"current stamina {stamina:F0} exceeds plausibility ceiling {staminaCeiling:F0} - flagged, not corrected (no real max to clamp to).", character.PlayerId);
+                        AuditLog.Flag("VitalsGuard", character, $"current stamina {stamina:F0} exceeds plausibility ceiling {staminaCeiling:F0} - flagged, not corrected (no real max to clamp to).");
                     }
                 }
             }

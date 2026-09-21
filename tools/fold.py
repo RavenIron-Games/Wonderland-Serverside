@@ -72,7 +72,7 @@ def pack(dist: pathlib.Path, version: str, staged_dll: pathlib.Path) -> pathlib.
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--version", default="0.6.0")
+    ap.add_argument("--version", default=None, help="Version to pack (defaults to manifest.json version)")
     ap.add_argument("--dist", type=pathlib.Path, default=pathlib.Path(__file__).parent.parent / "HexiumDist")
     ap.add_argument("--dll", type=pathlib.Path, default=pathlib.Path(__file__).parent.parent / "bin" / "Release" / "net472" / "Wonderland.dll")
     args = ap.parse_args()
@@ -87,9 +87,19 @@ def main() -> int:
         print(f"fold: no dist folder at {dist}", file=sys.stderr)
         return 1
 
-    stamp_manifest(dist / "manifest.json", args.version)
+    manifest_file = dist / "manifest.json"
+    version = args.version
+    if not version and manifest_file.exists():
+        try:
+            version = json.loads(manifest_file.read_text(encoding="utf-8")).get("version_number")
+        except Exception:
+            pass
+    if not version:
+        version = "0.10.4"
+
+    stamp_manifest(manifest_file, version)
     staged = stage_dll(dll, dist)
-    pack(dist, args.version, staged)
+    pack(dist, version, staged)
     return 0
 
 

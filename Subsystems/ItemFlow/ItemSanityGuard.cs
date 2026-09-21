@@ -1,3 +1,5 @@
+using Wonderland.Core;
+using Wonderland.Subsystems.Security;
 using Wonderland.Subsystems.Storage;
 
 namespace Wonderland.Subsystems.ItemFlow
@@ -7,9 +9,8 @@ namespace Wonderland.Subsystems.ItemFlow
     /// pickup the vacuum/production-supply engines consider gets checked here before it's allowed to
     /// move anywhere. The standing integrity sweep (Security/ItemIntegritySweep.cs) runs the same
     /// check against everything already sitting in a container, independent of whether it ever passed
-    /// through here. The ceiling is always Wonderland's own configured/boosted max
-    /// the item's own shared max stack - Wonderland no longer boosts that, so it is vanilla's own
-    /// raw number, now that the mod no longer boosts stack sizes at all.
+    /// through here. In addition to stack, quality, and variant sanity, this enforces server item blacklist
+    /// and maximum permitted progression tiers.
     /// </summary>
     public static class ItemSanityGuard
     {
@@ -34,7 +35,11 @@ namespace Wonderland.Subsystems.ItemFlow
                 return false;
             }
 
-            if (item.m_shared.m_maxQuality > 0 && (item.m_quality < 1 || item.m_quality > item.m_shared.m_maxQuality))
+            // 1.0's upgrader stations take an item whose recipe carries an upgrader resource past
+            // m_maxQuality (InventoryGui 51027) - a quality above the base cap is only implausible when the
+            // item cannot be upgraded that way (or the world runs NoCraftCost, which lifts the cap for all).
+            if (item.m_shared.m_maxQuality > 0
+                && (item.m_quality < 1 || (item.m_quality > item.m_shared.m_maxQuality && !ItemTierClassifier.CanExceedMaxQuality(item.m_dropPrefab))))
             {
                 reason = $"quality {item.m_quality} outside 1..{item.m_shared.m_maxQuality} for '{item.m_dropPrefab.name}'";
                 return false;
@@ -46,8 +51,26 @@ namespace Wonderland.Subsystems.ItemFlow
                 return false;
             }
 
+            if (ItemTierClassifier.IsBanned(item.m_dropPrefab.name))
+            {
+                reason = $"banned/cheat item '{item.m_dropPrefab.name}'";
+                return false;
+            }
+
+            ItemTier maxTier = ItemTierClassifier.GetEffectiveMaxTier();
+            if (maxTier != ItemTier.None)
+            {
+                ItemTier tier = ItemTierClassifier.GetTier(item.m_dropPrefab, item);
+                if (ItemTierClassifier.ExceedsTier(tier, maxTier))
+                {
+                    reason = $"item '{item.m_dropPrefab.name}' (Tier: {tier} - {ItemTierClassifier.GetTierReason(item.m_dropPrefab.name)}) exceeds server progression ceiling '{maxTier}'";
+                    return false;
+                }
+            }
+
             reason = "";
             return true;
         }
     }
 }
+

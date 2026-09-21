@@ -35,6 +35,8 @@ namespace Wonderland.Subsystems.DiscordNotify
             { "defeated_bonemass", "Bonemass" },
             { "defeated_dragon", "Moder" },
             { "defeated_goblinking", "Yagluth" },
+            { "defeated_queen", "The Queen" },
+            { "defeated_fader", "Fader" },
         };
 
         private static readonly HashSet<string> Announced = new HashSet<string>();
@@ -70,6 +72,8 @@ namespace Wonderland.Subsystems.DiscordNotify
             }
 
             _worldLoaded = true;
+            Security.ItemTier initialTier = Security.ItemTierClassifier.ResolveAutoTierFromWorld();
+            WonderlandDebug.LogAlways($"[Progression] World loaded with progression tier: {initialTier} (MaxAllowedTier: {WonderlandConfig.MaxAllowedTier?.Value ?? "Auto"}).");
         }
 
         [HarmonyPostfix]
@@ -93,6 +97,7 @@ namespace Wonderland.Subsystems.DiscordNotify
 
             DiscordNotifySubsystem.AnnounceBossDefeat(bossName);
             BarrkBot.BarrkBotStats.OnBossDefeated(bossName);
+            Security.ItemTierClassifier.OnBossDefeated(bare, bossName);
         }
     }
 }
