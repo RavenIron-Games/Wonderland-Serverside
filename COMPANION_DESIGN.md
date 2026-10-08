@@ -1,9 +1,10 @@
 # Wonderland Companion — design for an optional client-side mod
 
 Status: **design, nothing built.** Written 2026-10-08 against Wonderland 0.10.11 (this tree). Every server-side fact
-below is taken from the code in this repository and the decompile citations already in its comments. The facts about
-the vanilla **client** that this design needs and that this repository does not yet confirm are listed in
-[§11 Verify before coding](#11-verify-before-coding). `libs-Tools` was not available when this was written.
+below is taken from the code in this repository and the decompile citations already in its comments, except where
+§12 says otherwise. The facts this design needs that the repository does not yet confirm, mostly about the vanilla
+**client**, are listed in [§12 Verify before coding](#12-verify-before-coding). `libs-Tools` was not available when
+this was written.
 
 ---
 
@@ -18,8 +19,9 @@ Wonderland server gets:
 | **Vacuum** | No 1 s settle hold on their own drops, so no pickup duplication. A pull within one round trip of a drop instead of up to `VacuumInterval`. Per-chest settings: vacuum on or off, a filter list, catch-all, radius. Toasts showing what went where. | Exactly today. |
 | **Craft from containers** | Crafting, upgrading and later building use materials from chests in range. The requirement list shows `12 (+40 in chests)`. | Nothing. A vanilla client checks its own inventory before it sends anything, so this cannot work without the companion. |
 | **Production** | Station status on hover (`ON · coal ✓ · copper from 2 chests`). A hotkey toggle in place of emotes. Separate fuel and ore switches per station, an allowed-input list, a reserve, a fill target and linked source chests. A panel listing every station nearby, with bulk on and off. | Emotes still work. Any station they have not set up a companion player for behaves exactly as today. |
+| **BarrkBOT reporting** | Optionally shares their kills, crafts, builds and top skill with the Discord bot, labelled as reported by them. Asked once; nothing is sent without a yes. | **Everyone, console included, with nothing installed:** distance travelled, time sailing, biomes, boss fights, what the base has in stock, and whether the smelters are running. All server-measured, in new files, so the existing file is untouched. |
 
-**The three rules everything else follows from:**
+**The four rules everything else follows from:**
 
 1. **Vanilla stays first-class.** Console and crossplay players cannot mod, so the companion is purely additive.
    Nothing a vanilla client experiences changes unless an admin opts in, and the one opt-in that affects them,
@@ -33,10 +35,14 @@ Wonderland server gets:
 3. **It has to pass Wonderland's own vanilla enforcement.** The companion speaks only through routed RPCs that the
    server itself registers. It ships no ServerSync and no Jotunn, makes no custom ZRpc calls, changes no version
    string and adds no player sync keys. It stays silent until a server advertises support.
+4. **The bot is never handed a client's word as a server fact.** `barrkbot_wonderland.json` stays 100%
+   server-measured, as its notes promise. Client-reported figures live in their own file, carry `_reported` in their
+   names, and exist only for players who opted in.
 
 **Recommended build order** (cheapest, lowest risk and most visible first): Phase 0, protocol → Phase 1, production
 management plus container reliability → Phase 2, craft from containers → Phase 3, vacuum cooperation plus build from
-containers → Phase 4, enhanced chests (4a columns, 4b stacks). See [§9](#9-rollout).
+containers → Phase 4, enhanced chests (4a columns, 4b stacks). The server-measured BarrkBOT reporting (R1) needs no
+companion and can ship before any of it. See [§10](#10-rollout).
 
 ---
 
@@ -173,7 +179,7 @@ companion is inert, and a bug in it can only fall back to vanilla behaviour.
 
 | Method | Direction | Payload | Notes |
 |---|---|---|---|
-| `WLC_Advertise` | S→C | `protoMin, protoMax, serverVersion` | Sent to every peer right after `RPC_PeerInfo` (beside `SendActiveModProbes`). A vanilla client ignores an unknown global routed RPC (**verify**, §11.1). |
+| `WLC_Advertise` | S→C | `protoMin, protoMax, serverVersion` | Sent to every peer right after `RPC_PeerInfo` (beside `SendActiveModProbes`). A vanilla client ignores an unknown global routed RPC (**verify**, §12.1). |
 | `WLC_Hello` | C→S | `proto, companionVersion, featureBits` | Only after an advertise has been heard. |
 | `WLC_Welcome` | S→C | `proto, sessionToken, enabledFeatures, ParamsBlock` | `ParamsBlock` = ranges, limits, keybind hints and the per-prefab spec table. Sent again as a `Config` push whenever a relevant `SettingChanged` fires (the 5 s hot-reload poll already raises it). |
 | `WLC_Request` | C→S | `requestId, op, body` | Single entry point. |
@@ -218,6 +224,8 @@ server                                      companion client
 | `VacuumNudge(zdoids[])` | 3 | no reply (a hint) |
 | `ReleaseAnswer(itemZdoid, released, dataRevision)` | 3 | no reply |
 | `RecoverCache()` | 1 | the same as `/comehere` (`CacheClaimControl`) |
+| `ReportStats(deltas[], skillTop, skillSum)` | R2 | no reply. Only after the player consents ([§8.5](#85-player-reported-companion-opt-in)), at most once per 50 s. |
+| `ClearReportedStats()` | R2 | → `Ok`. The player's reported row is dropped at the next write. |
 
 **Push events:** `Config(ParamsBlock)`, `VacuumMoved{container, item, count}` (batched every 0.5 s, only to
 companion players within the radius), `ReleaseOffer{item, container}`, `StationChanged{zdoid, status}`,
@@ -241,8 +249,8 @@ there could not already do by hand.
 5. **The engine's own gates apply:** busy (`s_inUse`), a hull a client is simulating (`ShipAttachment.IsSimulatedByClient`),
    and an enhanced chest opened by a non-companion client.
 6. **Ledger and audit.** `ItemLedger.RecordTransfer("Companion:<op>", …)` for every item moved, `AuditLog` for every
-   `Denied` that names a tampered field. The BarrkBOT `lifetime` counters gain `crafted_from_containers` and
-   `vacuum_released`. Those are additive fields: see `BARRKBOT_CONTRACT.md` before adding them.
+   `Denied` that names a tampered field. The BarrkBOT counters these actions feed (`craft_from_chests_*`,
+   `vacuum_owner_releases_alltime`) go in the new files of [§8](#8-barrkbot-reporting), never the main export.
 
 ---
 
@@ -318,15 +326,15 @@ can happen:
 2. **Vanilla requests are vetoed at the relay.** Every client-to-client routed RPC passes through the server. The
    prefixes on `ZRoutedRpc.HandleRoutedRPC` and `RouteRPC` already exist for `RPC_RequestOwn`
    (`WaterBuoyancyEngine.cs:506-534`). They drop a **non-companion** sender's open, stack and take-all requests aimed
-   at an enhanced chest (exact method names: §11.2 and §11.3) and send `PlayerNotify.Toast`: *"This chest is
+   at an enhanced chest (exact method names: §12.2 and §12.3) and send `PlayerNotify.Toast`: *"This chest is
    enhanced: it needs Wonderland Companion (PC)."*
 3. **Ownership is pinned away from vanilla peers.** `ZdoSetOwnerPatch` gains `ContainerSpec.ShouldBlockOwnerChange`:
    an enhanced chest is never handed to a non-companion peer, whether by `ReleaseNearbyZDOS` or by anything else. It
    stays with the server or with a companion peer. Reliable open (§4.3.3) is what lets companion players open
    server-owned chests.
 4. **Columns first (4a), stacks second (4b).** Columns are a pure grid change: the server's scratch `Inventory` just
-   gets the wider width, and the companion widens the container panel (a layout change, §11.10). Stacks are harder:
-   `Inventory` reads `m_shared.m_maxStackSize` directly when it adds and stacks (§11.5), and `m_shared` is shared by
+   gets the wider width, and the companion widens the container panel (a layout change, §12.10). Stacks are harder:
+   `Inventory` reads `m_shared.m_maxStackSize` directly when it adds and stacks (§12.5), and `m_shared` is shared by
    every inventory, including the player's. Container-scoped stacks therefore need a scoped Harmony patch keyed on
    the `Inventory` instance, on **both** sides (server scratch inventories and the companion's container
    inventories), plus a split-on-withdraw rule so a stack bigger than vanilla never reaches a bag. That is real work
@@ -455,7 +463,7 @@ the item being upgraded stays in the bag, and only the materials come from chest
 
 The companion parses `s_items` straight from the container ZDOs its client already has replicated in range, using a
 scratch `Inventory` with lossless sizes the same way `ZdoInventoryIO` does. It sums by item name and feeds the totals
-into the requirement UI and `HaveRequirements` (patch points: §11.6). It filters with vanilla's client-side
+into the requirement UI and `HaveRequirements` (patch points: §12.6). It filters with vanilla's client-side
 `PrivateArea` access check and privacy rules. Display is advisory: the debit is the authority, and a stale count can
 only produce a polite `Insufficient`.
 
@@ -470,7 +478,7 @@ only produce a polite `Insufficient`.
 | A modified client never commits | Gets its materials back, which it could equally have spawned (bags are client-authoritative in Valheim) | Grants nothing new. `AuditLog` flags a player whose escrows repeatedly expire uncommitted. |
 
 The alternative policy, commit before crafting, swaps that duplication window for a loss window of the same size.
-Refund is recommended. See [§10](#10-decisions-for-you).
+Refund is recommended. See [§11](#11-decisions-for-you).
 
 ### 6.6 Building from containers (Phase 3)
 
@@ -533,7 +541,157 @@ switch. It is noted here because "etc etc" in the request may well mean it, but 
 
 ---
 
-## 8. Server configuration (new section `19 - Companion`)
+## 8. BarrkBOT reporting
+
+BarrkBOT answers Discord members from `barrkbot_wonderland.json`. Today it can answer who is online, sessions,
+connected time, deaths, bosses, progression and lifetime automation totals. It cannot answer what members are likely
+to ask next: *how far has Alice travelled, how much iron does the base have, are the smelters running, who crafts the
+most.* This section adds those answers without breaking anything the bot or the website already depends on.
+
+### 8.1 What `BARRKBOT_CONTRACT.md` forces
+
+- **The main file's promise has to stay true.** Its `export_notes` says every figure "is measured by the server
+  itself, never reported by a client", and the bot repeats that to members. **Nothing a client reports may go into
+  `barrkbot_wonderland.json`.**
+- **The main file is already full.** BarrkBOT's local provider cuts a tool result at 6,000 characters of compact JSON.
+  The file measured 6,844 before the progression and enforcement blocks added roughly 4,200 more. Anything appended
+  there would never reach the bot on that provider. **New facts go in new files.**
+- **One fact, one file.** The scanner reads every `barrkbot_*.json` under `BepInEx/config`, so no figure may appear in
+  two of them. Since BarrkBOT 6.1.20, the realm's liveness comes from the main file's `server.online`, so **no new file
+  carries `online`, a roster, or a copy of any existing field.**
+- **The row rules carry over:** flat scalars only, `name` on every row, numbers get ranked, units in names, `_alltime`
+  for cumulative figures, `null` means not measured, every `_notes` value a single string, no field name shared
+  between two scopes in one file, and no name matching the reader's cadence pattern
+  (`(write|census|interval|poll|sync|tick|export|refresh|update)_seconds`).
+- **The privacy rules carry over:** no platform ids and no per-player security counts. This design adds one more rule:
+  **no live location.** Telling a Discord channel where a named player is standing right now invites griefing.
+
+### 8.2 Most of it needs no companion
+
+The biggest finding here: most "better reporting" can be **measured by the server**, for **every** player, console
+included, with nothing installed. The companion adds only what a client alone knows, and that is kept apart and
+labelled.
+
+| File (new) | Contents | Measured by | Console players |
+|---|---|---|---|
+| `barrkbot_wonderland_activity.json` | Per-player activity: distance, sailing, biomes, boss fights, crafting from chests, client type | The server: character and ship ZDOs, its own actions | Included |
+| `barrkbot_wonderland_base.json` | The world: stock in chests, production status, the last 24 hours of automation, companion counters | The server: container and station ZDOs, its own engines | n/a |
+| `barrkbot_wonderland_reported.json` | Per-player kills, crafts, builds and top skill | **The player's own companion client**, opt-in, from the game's own statistics | Never appear |
+
+Rules shared by all three files:
+
+- Each one declares its own `tracking_since` (its counters start when it first ships), its own `export_notes`, and
+  `source` = `Wonderland <version>`.
+- Each one stays under 6,000 compact characters at 12 players. That is measured, not estimated: samples for 0, 3 and
+  12 players go in `tools/barrkbot/`, and `barrkbot-render-probe.mjs` is run on each, as the contract's "before
+  changing any field" step requires.
+- Switching a file off deletes it, the same rule the main file follows.
+- Full tables that would not fit (seconds per biome, the complete stock list, full skill tables) go to non-`barrkbot_`
+  JSON beside them for the website, the same pattern as `progression_tiers.json`: `Wonderland/activity_full.json` and
+  `Wonderland/stock_full.json`.
+
+### 8.3 Activity (server-measured, every player)
+
+Keyed by the same stable `s_playerID` string as the main file, with `name` in every row.
+
+| Field | How the server measures it |
+|---|---|
+| `distance_travelled_metres_alltime` | The sum of the character ZDO's movement between registry sweeps (5 s). A step that `PositionWatch` would treat as a transit (portal, respawn, admin teleport, dungeon entry) is skipped, using its existing suppression logic, so a portal jump is not a marathon. |
+| `sailing_seconds_alltime` | Seconds as the steering user of a hull (`s_user`), the field `ShipAttachment` and the `GP_Moder` boat requirement already read. |
+| `biomes_visited` | The count of distinct biomes under the character's position (`WorldGenerator.instance.GetBiome`, already used by `SpawnGovernor` and `RaidGovernor`). |
+| `most_time_biome` | The biome with the most connected seconds. A string, so the reader carries it along unranked. |
+| `boss_fights_alltime` | Players within 60 m of a boss's last known position when its `defeated_*` key is set. `BossDefeatWatch` already catches the key; the boss's position needs a small tracker (§12.12). This counts **fights, not kills**: the server cannot tell who landed the last hit. |
+| `craft_from_chests_items_alltime` | Materials the server took from chests for that player's **committed** crafts and fetches (§6). This is the server's own action, so it is server-measured. `null` for a player who has never connected with the companion, because a vanilla player cannot craft from chests and a 0 would rank them last. |
+| `client` | `"companion 0.3.0"` or `"vanilla"`: what their last connection used. A string, so not ranked. It answers "why can't Bob open that chest?". |
+
+Not exported, on purpose: the current position or biome (live location), and the seconds per biome (too big; those
+go to `activity_full.json`).
+
+### 8.4 Base (server-measured, the world)
+
+**`stock`**: what the world's player-built chests hold.
+
+- `stock_by_item`: prefab name → count for the top `BarrkBotStockTopItems` items (40 by default). Prefab names
+  (`IronScrap`, `Wood`) are used rather than `$item_` tokens, because a dedicated server's localisation cannot be
+  relied on.
+- `stock_items_total`, `stock_containers_counted`, `stock_measured_at`.
+- How it is measured: a slow `BudgetedSweep` over player-built containers (ship holds included; tombstones and world
+  loot excluded). Where the vacuum's per-revision contents cache has a fresh entry for a chest (it holds counts since
+  0.10.11), that entry is used and the chest is not loaded, so an unchanged chest near players costs nothing. Other
+  chests are loaded once per pass. Reading never writes, so a chest that is open is still counted.
+- `stock_measured_at` is when the last **full** pass finished. The notes call the figures a snapshot from that time,
+  never live.
+- **`stock_by_base`**, off by default: totals grouped by the ward covering each chest and labelled with the ward
+  creator's name ("Alice's ward"; the ward's ZDO layout is on the verify list, §12.8). It is off because it tells a
+  Discord channel exactly what a named player's base holds.
+
+**`production`**: counts built from the `lastDecision` record in §7.2 together with the station ZDO fields.
+
+- `stations_tracked`, `stations_running`, `stations_waiting_fuel`, `stations_waiting_input`, `kilns_running`,
+  `smelters_running`.
+- `production_items_fed_last_24h`: a rolling window of the server's own feeds. It complements the main file's
+  all-time total and does not repeat it.
+- Switched-off stations stay in the main file (`server.stations_switched_off`) and are not repeated here.
+
+**`automation_last_24h`**: `vacuum_items_moved_last_24h` and `auto_harvest_items_last_24h`. These are rolling
+windows over the same ledger tags (`VacuumEngine.VacuumTag` / `HarvestTag`) that the main file's all-time totals sum,
+and each has a different name from those totals.
+
+**`companion`**: `companion_players_online`, `containers_enhanced`, `catch_all_chests`, `stations_customised`,
+`vacuum_owner_releases_alltime`, `craft_from_chests_total_alltime`. A name differs from the per-player field whenever
+the scope differs.
+
+### 8.5 Player-reported (companion, opt-in)
+
+Only a client knows these numbers. They are useful ("who has killed the most?", "what is Cara's best skill?"), and
+they are a player's own word, so they get their own file, their own notes and their own consent step.
+
+- **Consent.** The first time a server welcomes a companion with `BarrkBotReportedExport` on, the companion asks once
+  per server: *"Share your kills, crafts, builds and top skill with this server's Discord bot?"* The answer is kept in
+  the companion's local config for that server. Nothing is sent before a yes. Taking it back sends `ClearReportedStats`
+  (§3.3), and the server drops the row at the next write.
+- **Source: the game's own per-character statistics** (the `PlayerProfile` stat counters, §12.13), not counters the
+  companion keeps. The companion takes a baseline at the welcome and reports only **deltas**, every 60 s and at a
+  clean disconnect (`ReportStats`). The figures are therefore about this world only: a character's other worlds never
+  leak in. A crash loses up to a minute, and the notes say so.
+- **Plausibility.** Each counter has a per-minute cap. A report over a cap is dropped whole and goes to the
+  `AuditLog`. It is not exported and nobody is kicked. Skill levels are clamped to 0–100. Bags are client-authoritative
+  in Valheim, so a cheater could already fake far more than a kill count. The caps keep the leaderboard sane; they are
+  not a security boundary.
+- **Fields:** flat, with `_reported` in every name so the provenance survives even if a reader drops the notes:
+  - `enemies_killed_reported_alltime`
+  - `boss_last_hits_reported_alltime`
+  - `crafts_reported_alltime`
+  - `pieces_built_reported_alltime`
+  - `trees_chopped_reported_alltime`
+  - `skill_top_reported` (a string, for example `"Swords 54"`)
+  - `skill_levels_sum_reported` (current, so no `_alltime`)
+- **Rows exist only for players who agreed.** `export_notes`: *"Reported by players' own Wonderland Companion
+  clients, from the game's own statistics, and not verified by the server. Only players who chose to share appear;
+  console players cannot install the companion. A missing player is not a zero; never rank across this file and
+  another."*
+
+### 8.6 Server-side changes and the contract
+
+- **`BarrkBotStats` registry** (`Wonderland.BarrkBot.<world>.dat`): `schema_version` 1 → 2, purely additive. New
+  `PlayerRow` fields (distance, sailing, the biome set, boss fights, crafting from chests, client) and a separate
+  reported block per player that `ClearReportedStats` can delete without touching the rest. Per-biome seconds stay in
+  the registry for the website file.
+- **New writers:** `BarrkBotActivityExport.cs`, `BarrkBotBaseExport.cs` and `BarrkBotReportedExport.cs`, beside
+  `BarrkBotExport.cs`. They run on the same `BarrkBotWriteSeconds` timer, use the same `WriteAtomic`, and are
+  removed when switched off. The stock sweep is its own budgeted sweep in the BarrkBot subsystem.
+- **The main file does not change.** It stays at schema 3 with every field where it is. Nothing the bot or the website
+  binds today moves.
+- **`BARRKBOT_CONTRACT.md`** gains the three paths and their field lists. Before release, send the field list to the
+  BarrkBOT maintainer. The known reader quirk (`cumulativeCollections` does not treat id-keyed `players.*_alltime` as
+  cumulative) will affect the new per-player maps too, so ask for the fix to cover them.
+- **Later, a decision for you (§11):** moving the main file's `players` map into the activity file (schema v4, the
+  split HANDOFF-0.8.0 §5.3 already proposed) would free about half of the main file's budget. It is a breaking change
+  for the bot and the website, so it only happens together with the maintainer, and not as part of this design.
+
+---
+
+## 9. Server configuration (new section `19 - Companion`)
 
 All of these are server-side and reach companion clients in `Welcome` and `Config` pushes, **not** through
 ServerSync. They are read at use time, so hot reload works the same way it does for the rest of the file.
@@ -553,9 +711,20 @@ ServerSync. They are read at use time, so hot reload works the same way it does 
 | `CompanionEnhancedStackMultiplier` | 1 | 1–4 | Phase 4b. 1 means off. |
 | `CompanionRequestRate` | 20 | 5–100 | Requests per second per peer, burst ×2. |
 
+The BarrkBOT additions go in the existing `17 - BarrkBOT Export` section. Like the rest of that section they are
+**local**, because they describe this server's own files:
+
+| Key | Default | Range | Notes |
+|---|---|---|---|
+| `BarrkBotActivityExport` | true | — | §8.3. Works without the companion. |
+| `BarrkBotBaseExport` | true | — | §8.4. Works without the companion. |
+| `BarrkBotStockTopItems` | 40 | 0–100 | 0 leaves out the `stock` block. |
+| `BarrkBotStockByBase` | false | — | Stock grouped by ward and its owner's name (§8.4). |
+| `BarrkBotReportedExport` | true | — | §8.5. Only players who opted in ever appear. Off means the companion never asks. |
+
 ---
 
-## 9. Rollout
+## 10. Rollout
 
 Each phase ships as a pair, a server minor version and a companion version, and each one ends with a live boot in the
 style of the HANDOFF test plans.
@@ -564,10 +733,12 @@ style of the HANDOFF test plans.
 |---|---|---|---|---|---|
 | 0 | 0.11.0 | 0.1.0 | `CompanionProtocol`, advertise, hello, welcome, dormancy, `CompanionPeers`, rate limits, config section. No features. | S | Low |
 | 1 | 0.11.x | 0.2.0 | Production: status, hover, hotkeys, panel, `StationPrefs` + migration, `lastDecision`. Containers: the `ContainerSpec` refactor (no behaviour change), rows without an anchor, lossless load, reliable open, sync highlight. | M | Low |
-| 2 | 0.12.0 | 0.3.0 | Craft from containers (craft + upgrade), `CraftDebit`, escrow journal, ward and privacy checks, ledger and BarrkBOT counters. | L | Medium |
+| 2 | 0.12.0 | 0.3.0 | Craft from containers (craft + upgrade), `CraftDebit`, escrow journal, ward and privacy checks, ledger, and the `craft_from_chests_*` counters (§8). | L | Medium |
 | 3 | 0.13.0 | 0.4.0 | Vacuum: release hand-over, nudges, `ContainerPrefs` incl. CatchAll, feedback. Building from containers via fetch. | M | Medium |
 | 4a | 0.14.0 | 0.5.0 | Enhanced chests, columns: per-chest flag, relay veto, ownership pin, wide panel. | M | Medium–high |
 | 4b | 0.15.0 | 0.6.0 | Enhanced chests, container-scoped stacks on both sides. | L | High |
+| R1 | any 0.10.x / 0.11.x | — | **BarrkBOT, server-measured** (§8.3–8.4): activity and base files, registry v2, the stock sweep, rolling 24 h windows, `lastDecision` (moved forward from Phase 1). Needs no companion, so it can ship first. | M | Low |
+| R2 | with Phase 1+ | 0.2.0+ | **BarrkBOT, companion side:** the reported file, the consent prompt, `ReportStats` / `ClearReportedStats`, the `client` field. Companion counters (`craft_from_chests_*`, `vacuum_owner_releases_alltime`, `containers_enhanced`) start reporting as their phases land. | S | Low |
 
 **Phase 0 acceptance (the gate for everything else):**
 1. A vanilla client on a 0.11.0 server: identical logs and behaviour to 0.10.11, except one `WLC_Advertise` per join.
@@ -587,7 +758,7 @@ enforcement section gains one line: the companion is the one client mod a Wonder
 
 ---
 
-## 10. Decisions for you
+## 11. Decisions for you
 
 These are the choices that change what gets built. Each has a recommendation, so the design can go ahead on defaults
 if you have no preference.
@@ -604,13 +775,21 @@ if you have no preference.
 5. **The enforcement stance.** The companion is the only accepted client mod (**recommended**, and how the current
    code behaves), or a future admin allowlist for other mods. The allowlist is out of scope here, because
    enforcement identifies frameworks, not mods.
+6. **Player-reported stats on the bot** (§8.5). Opt-in per player, in a separate clearly labelled file
+   (**recommended**), or not at all, which keeps every BarrkBOT figure server-measured. Kills and skills exist only on
+   the client, so "not at all" means the bot can never answer those.
+7. **Stock by base** (§8.4). Off by default (**recommended**: it names what a player's base holds), or on for
+   servers where everyone shares one base anyway.
+8. **Moving the main file's player rows** into the activity file (schema v4). Not now (**recommended**: it breaks the
+   bot and the website), or later together with the BarrkBOT maintainer.
 
 ---
 
-## 11. Verify before coding
+## 12. Verify before coding
 
-These are facts about the vanilla **client** assembly that this design relies on and that this repository does not
-yet cite. Each one should be checked against `libs-Tools/1.0/DECOMPILED` (client) before the phase that needs it.
+These are facts this design relies on that this repository does not yet cite. Items 1–11 and 13 are about the
+vanilla **client** assembly and should be checked against `libs-Tools/1.0/DECOMPILED` (client) before the phase that
+needs them. Item 12 is a server-side check, and item 14 is in the BarrkBOT documentation.
 
 1. **(P0)** The client's `ZRoutedRpc.HandleRoutedRPC` ignores a global routed RPC with an unregistered hash without
    logging or erroring. That is what makes `WLC_Advertise` harmless to vanilla clients.
@@ -637,10 +816,20 @@ yet cite. Each one should be checked against `libs-Tools/1.0/DECOMPILED` (client
     width above 8.
 11. **(P1)** `Smelter.GetHoverText` and `Fireplace.GetHoverText` (and any 1.0 hover text for windmill and spinning
     wheel) as the append points for the status line.
+12. **(R1, server)** Boss positions at the moment of defeat: the boss prefab names, and whether the server's copy of a
+    boss's character ZDO still has a recent position when `BossDefeatWatch` sees the `defeated_*` key. If not, track
+    the last position while the boss ZDO is alive.
+13. **(R2, client)** The 1.0 per-character statistics on `PlayerProfile`: the store, the stat types for enemy kills,
+    boss last hits, crafts and upgrades, pieces built and trees chopped, and whether they count across all worlds
+    (which is why the companion reports deltas).
+14. **(R1/R2, BarrkBOT repo)** `libs-Tools/IMPLEMENTATIONS/BarrkBOTExports.md` §6 ("the client-side trap") and §7:
+    confirm that a server-written file of clearly labelled client-reported figures is acceptable. Also confirm the
+    scanner treats several `barrkbot_*.json` files from one mod as separate exports, as it does with TortalPortal
+    Lite's `barrkbot_portals.json`.
 
 ---
 
-## 12. Non-goals
+## 13. Non-goals
 
 - Anything the server would not otherwise allow: no item spawning, no recipe unlocks, no bypassing station or tier
   rules. `EquipmentGuard` and the progression ledger apply to crafted output exactly as before.
@@ -649,3 +838,5 @@ yet cite. Each one should be checked against `libs-Tools/1.0/DECOMPILED` (client
 - Console or crossplay console support. They cannot mod; the vanilla path is their experience.
 - Using ServerSync, Jotunn or asset bundles in the companion.
 - Replacing any vanilla-client feature. Emotes, anchors and the settle path all stay.
+- Anything client-reported in `barrkbot_wonderland.json`, live player locations on the bot, or a per-player
+  security-flag ranking.
